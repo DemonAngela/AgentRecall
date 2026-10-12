@@ -18,7 +18,8 @@ export function formatRelativeTime(ts: number, language: "en" | "zh"): string {
   const hours = Math.floor(minutes / 60);
   if (hours < 24) return language === "zh" ? `${hours}小时前` : `${hours}h ago`;
   const days = Math.floor(hours / 24);
-  if (days < 30) return language === "zh" ? `${days}天前` : `${days}d ago`;
+  // A day count stops being readable once a session is more than a week old.
+  if (days < 7) return language === "zh" ? `${days}天前` : `${days}d ago`;
   return new Date(ts).toLocaleDateString(language === "zh" ? "zh-CN" : "en-US");
 }
 
