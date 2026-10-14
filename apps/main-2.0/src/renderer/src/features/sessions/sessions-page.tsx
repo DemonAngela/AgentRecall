@@ -42,6 +42,7 @@ import type {
 } from "../../../../core/types";
 import type { SavedSearch } from "../../../../core/store/saved-searches";
 import { AGENT_RECALL_INVOCATION_SURFACES } from "../../../../shared/runtime-invocation";
+import { customDateRangeFromInputs, NATURAL_DATE_PRESETS, naturalDateRange } from "./date-presets";
 import {
   DATE_RANGE_OPTIONS,
   dateRangeLabel,
@@ -183,6 +184,10 @@ export function SessionsPage({
   const [groupMode, setGroupMode] = useState<GroupMode>("flat");
   const [invocationMenuOpen, setInvocationMenuOpen] = useState(false);
   const invocationMenuRef = useRef<HTMLDivElement>(null);
+  const [dateMenuOpen, setDateMenuOpen] = useState(false);
+  const dateMenuRef = useRef<HTMLDivElement>(null);
+  const [customStartDate, setCustomStartDate] = useState("");
+  const [customEndDate, setCustomEndDate] = useState("");
   const l = (en: string, zh: string): string => model.language === "zh" ? zh : en;
   const queryBuilderState = useMemo<QueryBuilderState>(() => ({
     source: model.source === "all" ? undefined : model.source,
@@ -221,6 +226,24 @@ export function SessionsPage({
       document.removeEventListener("keydown", closeOnEscape);
     };
   }, [invocationMenuOpen]);
+
+  useEffect(() => {
+    if (!dateMenuOpen) return;
+    const closeOnPointerDown = (event: PointerEvent): void => {
+      if (event.target instanceof Node && !dateMenuRef.current?.contains(event.target)) {
+        setDateMenuOpen(false);
+      }
+    };
+    const closeOnEscape = (event: KeyboardEvent): void => {
+      if (event.key === "Escape") setDateMenuOpen(false);
+    };
+    document.addEventListener("pointerdown", closeOnPointerDown);
+    document.addEventListener("keydown", closeOnEscape);
+    return () => {
+      document.removeEventListener("pointerdown", closeOnPointerDown);
+      document.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [dateMenuOpen]);
 
   useEffect(() => {
     if (model.origin !== "agentrecall") setInvocationMenuOpen(false);
@@ -439,7 +462,65 @@ export function SessionsPage({
               role="group"
               aria-label={l("Session time range", "会话时间范围")}
             >
-              <CalendarDays size={14} aria-hidden="true" />
+              <span className="date-filter-menu-anchor" ref={dateMenuRef}>
+                <button
+                  type="button"
+                  className={`date-filter-menu-trigger ${model.customDateRange ? "active" : ""} ${dateMenuOpen ? "is-open" : ""}`}
+                  aria-label={l("Custom date range", "自定义日期")}
+                  aria-expanded={dateMenuOpen}
+                  aria-haspopup="menu"
+                  onClick={() => setDateMenuOpen((open) => !open)}
+                >
+                  <CalendarDays size={14} aria-hidden="true" />
+                </button>
+                {dateMenuOpen ? (
+                  <div className="date-filter-menu">
+                    <div role="menu" aria-label={l("Custom date range", "自定义日期")}>
+                      {NATURAL_DATE_PRESETS.map((preset) => (
+                        <button
+                          type="button"
+                          role="menuitem"
+                          key={preset.value}
+                          onClick={() => {
+                            actions.setCustomDateRange(naturalDateRange(preset.value));
+                            setDateMenuOpen(false);
+                          }}
+                        >
+                          {model.language === "zh" ? preset.label.zh : preset.label.en}
+                        </button>
+                      ))}
+                    </div>
+                    <div className="date-filter-menu-custom">
+                      <input
+                        type="date"
+                        aria-label={l("Start date", "开始日期")}
+                        value={customStartDate}
+                        onChange={(event) => setCustomStartDate(event.target.value)}
+                      />
+                      <span aria-hidden="true">–</span>
+                      <input
+                        type="date"
+                        aria-label={l("End date", "结束日期")}
+                        value={customEndDate}
+                        onChange={(event) => setCustomEndDate(event.target.value)}
+                      />
+                      <button
+                        type="button"
+                        aria-label={l("Apply date range", "应用日期范围")}
+                        disabled={!customStartDate}
+                        onClick={() => {
+                          const range = customDateRangeFromInputs(customStartDate, customEndDate);
+                          if (!range) return;
+                          actions.setCustomDateRange(range);
+                          setDateMenuOpen(false);
+                        }}
+                      >
+                        {l("Apply", "应用")}
+                      </button>
+                    </div>
+                  </div>
+                ) : null}
+              </span>
               {model.customDateRange ? (
                 <button
                   className="date-filter-custom active"
@@ -457,7 +538,11 @@ export function SessionsPage({
                   className={!model.customDateRange && model.dateRange === option.value
                     ? "active"
                     : ""}
-                  onClick={() => actions.setDateRange(option.value)}
+                  onClick={() => {
+                    actions.setDateRange(option.value);
+                    // An exact range would keep overriding the rolling preset.
+                    if (model.customDateRange) actions.clearCustomDateRange();
+                  }}
                   title={dateRangeLabel(option.value, model.language)}
                   aria-label={dateRangeLabel(option.value, model.language)}
                 >

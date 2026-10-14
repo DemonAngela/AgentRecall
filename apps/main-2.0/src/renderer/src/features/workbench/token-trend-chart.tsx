@@ -210,16 +210,49 @@ export function TokenTrendChart({ points: history = [], language, onSelectDay }:
           ) : null}
         </div>
 
-        <div className="workbench-token-trend-labels" aria-hidden="true" style={{ gridTemplateColumns: `repeat(${tickIndexes.length || 1}, minmax(0, 1fr))` }}>
+        <div className="workbench-token-trend-labels" style={{ gridTemplateColumns: `repeat(${tickIndexes.length || 1}, minmax(0, 1fr))` }}>
           {tickIndexes.map(index => (
-            <span key={points[index].dayStart} className={index === points.length - 1 ? "today" : ""}>{shortDate.format(points[index].dayStart)}</span>
+            <button
+              key={points[index].dayStart}
+              type="button"
+              data-day-start={points[index].dayStart}
+              className={index === points.length - 1 ? "today" : ""}
+              tabIndex={index === selectedIndex ? 0 : -1}
+              onClick={() => {
+                setSelectedDayStart(points[index].dayStart);
+                onSelectDay(points[index]);
+              }}
+              aria-label={l(
+                `${fullDate.format(points[index].dayStart)}. View sessions`,
+                `${fullDate.format(points[index].dayStart)}。查看当天会话`,
+              )}
+            >
+              {shortDate.format(points[index].dayStart)}
+            </button>
           ))}
         </div>
       </div>
 
       <footer className="workbench-token-trend-foot">
         <span>{l("Daily avg", "日均")} <b>{formatTokenCount(dailyAverage)}</b></span>
-        <span>{l("Today", "今天")} <b>{formatTokenCount(today?.totalTokens ?? 0)}</b></span>
+        {today ? (
+          <button
+            type="button"
+            className="workbench-token-trend-today"
+            onClick={() => {
+              setSelectedDayStart(today.dayStart);
+              onSelectDay(today);
+            }}
+            aria-label={l(
+              `View today's sessions (${formatTokenCount(today.totalTokens)} Token)`,
+              `查看今天的会话（${formatTokenCount(today.totalTokens)} Token）`,
+            )}
+          >
+            {l("Today", "今天")} <b>{formatTokenCount(today.totalTokens)}</b>
+          </button>
+        ) : (
+          <span>{l("Today", "今天")} <b>{formatTokenCount(0)}</b></span>
+        )}
       </footer>
     </section>
   );

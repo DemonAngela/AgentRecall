@@ -74,7 +74,7 @@ it("switches actual daily windows, totals, sparse dates and selected-day navigat
       expect(host.querySelectorAll(".workbench-token-trend-point")).toHaveLength(days);
       expect(host.querySelectorAll('.workbench-token-trend-point[tabindex="0"]')).toHaveLength(1);
       expect(host.querySelector(".workbench-token-trend-head b")?.textContent).toBe(String(days));
-      expect(host.querySelectorAll(".workbench-token-trend-labels span")).toHaveLength(days === 7 ? 7 : 5);
+      expect(host.querySelectorAll(".workbench-token-trend-labels button")).toHaveLength(days === 7 ? 7 : 5);
       await act(async () => host.querySelector<HTMLButtonElement>(".workbench-token-trend-point")!.click());
       expect(onSelectDay).toHaveBeenLastCalledWith(points[90 - days]);
       // Leaving Workbench unmounts the chart; returning must restore its range.
@@ -193,8 +193,56 @@ it("preserves the chosen date across data refreshes and exposes exact daily tota
     // When the selected day leaves the window, the latest remaining day is
     // still reachable by Tab; an out-of-range index cannot strand the chart.
     await act(async () => root.render(<TokenTrendChart points={refreshed.slice(-1)} language="en" onSelectDay={onSelectDay} />));
-    expect(host.querySelectorAll('[tabindex="0"]')).toHaveLength(1);
-    expect(host.querySelector('[tabindex="0"]')?.getAttribute("data-day-start")).toBe(String(points[89].dayStart));
+    expect(host.querySelectorAll('.workbench-token-trend-point[tabindex="0"]')).toHaveLength(1);
+    expect(host.querySelector('.workbench-token-trend-point[tabindex="0"]')?.getAttribute("data-day-start")).toBe(String(points[89].dayStart));
+    expect(host.querySelectorAll('.workbench-token-trend-labels button[tabindex="0"]')).toHaveLength(1);
+  } finally {
+    await act(async () => root.unmount());
+    host.remove();
+  }
+});
+
+it.each([7, 90])("opens a day's sessions from its bottom date label over a %i-day window", async (days) => {
+  Reflect.set(globalThis, "IS_REACT_ACT_ENVIRONMENT", true);
+  window.localStorage.setItem("agent-recall.workbench-token-trend-period.v2", String(days));
+  const host = document.createElement("div");
+  document.body.append(host);
+  const root = createRoot(host);
+  const onSelectDay = vi.fn();
+  try {
+    await act(async () => root.render(<TokenTrendChart points={points} language="en" onSelectDay={onSelectDay} />));
+    const labels = [...host.querySelectorAll<HTMLButtonElement>(".workbench-token-trend-labels button")];
+    expect(labels).toHaveLength(days === 7 ? 7 : 5);
+    expect(host.querySelector(".workbench-token-trend-labels")?.getAttribute("aria-hidden")).toBeNull();
+    expect(labels[2]!.getAttribute("aria-label")).toContain("View sessions");
+    const clickedDayStart = labels[2]!.getAttribute("data-day-start");
+    await act(async () => labels[2]!.click());
+    const expected = points.find((point) => String(point.dayStart) === clickedDayStart);
+    expect(onSelectDay).toHaveBeenCalledExactlyOnceWith(expected);
+    // The clicked label becomes the group's single Tab stop, mirroring the dots.
+    const tabStops = labels.filter((label) => label.tabIndex === 0);
+    expect(tabStops).toEqual([labels[2]]);
+  } finally {
+    await act(async () => root.unmount());
+    host.remove();
+  }
+});
+
+it("opens today's sessions from the footer and stays plain when no data exists", async () => {
+  Reflect.set(globalThis, "IS_REACT_ACT_ENVIRONMENT", true);
+  const host = document.createElement("div");
+  document.body.append(host);
+  const root = createRoot(host);
+  const onSelectDay = vi.fn();
+  try {
+    await act(async () => root.render(<TokenTrendChart points={points} language="en" onSelectDay={onSelectDay} />));
+    const today = host.querySelector<HTMLButtonElement>(".workbench-token-trend-foot button");
+    expect(today?.getAttribute("aria-label")).toContain("View today");
+    await act(async () => today!.click());
+    expect(onSelectDay).toHaveBeenCalledExactlyOnceWith(points[89]);
+    await act(async () => root.render(<TokenTrendChart points={[]} language="en" onSelectDay={onSelectDay} />));
+    expect(host.querySelector(".workbench-token-trend-foot button")).toBeNull();
+    expect(host.querySelector(".workbench-token-trend-foot")?.textContent).toContain("Today");
   } finally {
     await act(async () => root.unmount());
     host.remove();
