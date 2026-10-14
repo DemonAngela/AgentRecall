@@ -60,8 +60,62 @@ function protoLengthDelimited(field: number, payload: Buffer): Buffer {
   return Buffer.concat([protoTag(field, 2), protoVarint(payload.length), payload]);
 }
 
+function protoVarintField(field: number, value: number): Buffer {
+  return Buffer.concat([protoTag(field, 0), protoVarint(value)]);
+}
+
 function protoString(field: number, value: string): Buffer {
   return protoLengthDelimited(field, Buffer.from(value, "utf8"));
+}
+
+// The steps table shares the file with the metadata blob; capture what the
+// display transcript drops: failed tool results, per-call usage, and titles.
+function appendStepsTable(
+  dbPath: string,
+  rows: Array<{ idx: number; stepType: number; status: number; payload: Buffer; errorDetails?: Buffer }>,
+): void {
+  const db = new DatabaseSync(dbPath);
+  db.exec("CREATE TABLE steps (idx INTEGER PRIMARY KEY, step_type INTEGER NOT NULL DEFAULT 0, status INTEGER NOT NULL DEFAULT 0, error_details BLOB, step_payload BLOB)");
+  const insert = db.prepare("INSERT INTO steps (idx, step_type, status, error_details, step_payload) VALUES (?, ?, ?, ?, ?)");
+  for (const row of rows) insert.run(row.idx, row.stepType, row.status, row.errorDetails ?? null, row.payload);
+  db.close();
+}
+
+function plannerPayload(stepType: number, realCallIds: string[], usage?: { input: number; cached: number; output: number; reasoning: number }): Buffer {
+  const callMessages = realCallIds.map((callId) => protoLengthDelimited(7, Buffer.concat([
+    protoString(1, callId),
+    protoString(2, "view_file"),
+  ])));
+  return Buffer.concat([
+    protoVarintField(1, stepType),
+    protoLengthDelimited(5, usage
+      ? protoLengthDelimited(9, Buffer.concat([
+        protoVarintField(2, usage.input),
+        protoVarintField(5, usage.cached),
+        protoVarintField(9, usage.reasoning),
+        protoVarintField(10, usage.output),
+      ]))
+      : Buffer.alloc(0)),
+    protoLengthDelimited(20, Buffer.concat(callMessages)),
+  ]);
+}
+
+function failedToolPayload(realCallId: string, errorText: string, timestampSeconds: number): Buffer {
+  return Buffer.concat([
+    protoVarintField(1, 132),
+    protoLengthDelimited(5, Buffer.concat([
+      protoLengthDelimited(1, protoVarintField(1, timestampSeconds)),
+      protoLengthDelimited(4, Buffer.concat([
+        protoString(1, realCallId),
+        protoString(2, "view_file"),
+      ])),
+    ])),
+    protoLengthDelimited(31, protoString(2, errorText)),
+  ]);
+}
+
+function titlePayload(title: string): Buffer {
+  return Buffer.concat([protoVarintField(1, 23), protoLengthDelimited(30, protoString(4, title))]);
 }
 
 function writeMetadataDb(
@@ -150,7 +204,7 @@ describe("Antigravity sessions", () => {
     expect(traceEvents).toHaveLength(6);
   });
 
-  it("pairs results in order and leaves a canceled call unpaired", () => {
+  it("pairs results in order and leaves a failed call unresolved without a database", () => {
     const root = fixture();
     const paths = antigravityPaths(root, CONVERSATION_ID);
     writeTranscript(paths.transcript, [
@@ -172,6 +226,79 @@ describe("Antigravity sessions", () => {
     expect(results.map((event) => event.callId)).toEqual(["antigravity:1:0"]);
     expect(results[0].detail).toBe("first result");
     expect(loaded.messages.map((message) => message.content)).toEqual(["Run the checks", "Partial result accepted."]);
+  });
+
+  it("recovers failed and aborted tool results, token usage, and the title from the conversation database", () => {
+    const root = fixture();
+    const paths = antigravityPaths(root, CONVERSATION_ID);
+    const projectDir = path.join(root, "workspace");
+    writeTranscript(paths.transcript, [
+      { step_index: 0, source: "USER_EXPLICIT", type: "USER_INPUT", status: "DONE", created_at: "2026-09-15T08:00:00Z", content: "<USER_REQUEST>\nAudit the repo\n</USER_REQUEST>" },
+      { step_index: 1, source: "MODEL", type: "PLANNER_RESPONSE", status: "DONE", created_at: "2026-09-15T08:00:01Z", content: "Inspecting now.", tool_calls: [
+        { name: "view_file", args: { AbsolutePath: "/work/app/a.ts" } },
+        { name: "run_command", args: { CommandLine: "npm test" } },
+      ] },
+      { step_index: 3, source: "MODEL", type: "PLANNER_RESPONSE", status: "DONE", created_at: "2026-09-15T08:00:10Z", tool_calls: [
+        { name: "grep_search", args: { Query: "audit" } },
+      ] },
+      // The failed step 2 is missing from the transcript, so the completed
+      // result at step 4 must pair by its recorded call id, not by order.
+      { step_index: 4, source: "MODEL", type: "GENERIC", status: "DONE", created_at: "2026-09-15T08:00:12Z", content: "Created At: 2026-09-15T16:00:12+08:00\nCompleted At: 2026-09-15T16:00:13+08:00\nsecond tool output" },
+      { step_index: 6, source: "MODEL", type: "PLANNER_RESPONSE", status: "DONE", created_at: "2026-09-15T08:00:20Z", content: "Two tools failed." },
+      { step_index: 7, source: "SYSTEM", type: "CHECKPOINT", status: "DONE", created_at: "2026-09-15T08:00:21Z", content: "{{ CHECKPOINT 0 }}\nEarlier parts." },
+    ]);
+    writeMetadataDb(paths.metadataDb, {
+      folderUri: pathToFileURL(projectDir).href,
+      branch: "main",
+      createdAtSeconds: 1789444800,
+    });
+    appendStepsTable(paths.metadataDb, [
+      { idx: 1, stepType: 15, status: 3, payload: plannerPayload(15, ["toolu_real_one", "toolu_real_two"], { input: 1200, cached: 8000, output: 300, reasoning: 120 }) },
+      { idx: 2, stepType: 132, status: 7, payload: failedToolPayload("toolu_real_one", "declaring permissions failed: user denied command(npm test)", 1789444820) },
+      { idx: 3, stepType: 15, status: 3, payload: plannerPayload(15, ["toolu_real_three"]) },
+      { idx: 4, stepType: 132, status: 3, payload: failedToolPayload("toolu_real_three", "", 1789444812) },
+      { idx: 5, stepType: 132, status: 6, payload: failedToolPayload("toolu_real_two", "aborted by the user", 1789444830) },
+      { idx: 7, stepType: 23, status: 3, payload: titlePayload("Repository audit") },
+    ]);
+
+    const [loaded] = loadDefaultSessions({ homeDir: root, includeAntigravity: true })
+      .filter((item) => item.session.source === "antigravity");
+
+    const calls = (loaded.traceEvents ?? []).filter((event) => event.kind === "tool_call");
+    const results = (loaded.traceEvents ?? []).filter((event) => event.kind === "tool_result");
+    expect(calls.map((event) => event.callId)).toEqual(["antigravity:1:0", "antigravity:1:1", "antigravity:3:0"]);
+    // Order-only pairing would have attached the completed result to run_command.
+    expect(results.find((event) => event.status === "completed")).toMatchObject({
+      callId: "antigravity:3:0",
+      detail: "second tool output",
+    });
+    expect(results.find((event) => event.status === "failed")).toMatchObject({
+      callId: "antigravity:1:0",
+      detail: "declaring permissions failed: user denied command(npm test)",
+      // The failure timestamp comes from the step metadata, not from the planner call.
+      timestamp: new Date(1789444820 * 1000).toISOString(),
+    });
+    expect(results.find((event) => event.status === "aborted")).toMatchObject({
+      callId: "antigravity:1:1",
+      detail: "aborted by the user",
+    });
+    // Every recorded call now has a result.
+    for (const call of calls) expect(results.some((result) => result.callId === call.callId)).toBe(true);
+    expect(loaded.session).toMatchObject({
+      originalTitle: "Repository audit",
+      projectPath: projectDir,
+      gitBranch: "main",
+    });
+    expect(loaded.session.tokenUsage).toMatchObject({
+      inputTokens: 1200,
+      cachedInputTokens: 8000,
+      outputTokens: 300,
+      reasoningOutputTokens: 120,
+      totalTokens: 9620,
+    });
+    expect(loaded.tokenEvents).toEqual([
+      expect.objectContaining({ dedupeKey: "antigravity:1", timestamp: Date.parse("2026-09-15T08:00:01Z") }),
+    ]);
   });
 
   it("falls back to the plain transcript, the file path, and the first question", () => {
@@ -229,7 +356,7 @@ describe("Antigravity sessions", () => {
     const root = fixture();
     const paths = antigravityPaths(root, CONVERSATION_ID);
     writeTranscript(paths.transcript, [
-      { step_index: 0, source: "USER_EXPLICIT", type: "USER_INPUT", status: "DONE", created_at: "2026-09-15T07:00:00Z", content: "<USER_REQUEST>\nWarm index request\n</USER_REQUEST>" },
+      { step_index: 0, source: "USER_EXPLICIT", type: "USER_INPUT", status: "DONE", created_at: "2026-09-15T07:00:00Z", content: "<USER_REQUEST>Warm index request</USER_REQUEST>" },
     ]);
     const seenSources: Array<string | undefined> = [];
     const loaded = loadDefaultSessions({

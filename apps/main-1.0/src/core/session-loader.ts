@@ -2729,37 +2729,194 @@ function antigravityFolderUriToPath(uri: string): string {
   }
 }
 
-interface AntigravityConversationMetadata {
+interface AntigravityTokenUsage {
+  inputTokens: number;
+  cachedInputTokens: number;
+  outputTokens: number;
+  reasoningOutputTokens: number;
+}
+
+interface AntigravityFailedCall {
+  callId: string;
+  status: "failed" | "aborted" | "unknown";
+  detail: string;
+  timestampMs: number;
+}
+
+interface AntigravityConversationDb {
   projectPath: string;
   gitBranch: string | null;
   createdAtMs: number;
+  title: string;
+  /** Planner step index -> token usage of that model call (payload field 5.9). */
+  usageByStep: Map<number, AntigravityTokenUsage>;
+  /** Planner step index -> real tool call ids in call order (payload field 20.7.1). */
+  toolCallIdsByStep: Map<number, string[]>;
+  /** Result step index -> real tool call id it belongs to (payload field 5.4.1). */
+  resultCallIdsByStep: Map<number, string>;
+  /** Failed or aborted tool steps, which the transcript does not contain. */
+  failedCalls: AntigravityFailedCall[];
 }
 
-function readAntigravityConversationMetadata(dbPath: string): AntigravityConversationMetadata | null {
+function antigravityFieldBytes(fields: AntigravityProtoField[], field: number): Buffer | null {
+  return fields.find((entry) => entry.field === field && entry.bytes)?.bytes ?? null;
+}
+
+function antigravityFieldVarint(fields: AntigravityProtoField[], field: number): number {
+  return fields.find((entry) => entry.field === field && !entry.bytes)?.varint ?? 0;
+}
+
+function antigravityStepTimestampMs(metaFields: AntigravityProtoField[]): number {
+  const stamp = antigravityFieldBytes(metaFields, 1);
+  if (!stamp) return 0;
+  const seconds = antigravityFieldVarint(antigravityProtoFields(stamp), 1);
+  return seconds > 0 ? seconds * 1000 : 0;
+}
+
+function antigravityToolCallIdentity(message: Buffer | null): string {
+  if (!message) return "";
+  return antigravityFieldText(antigravityProtoFields(message), 1);
+}
+
+function antigravityErrorText(errorDetails: Uint8Array | undefined): string {
+  if (!errorDetails) return "";
+  const fields = antigravityProtoFields(Buffer.from(errorDetails));
+  return antigravityFieldText(fields, 1)
+    || antigravityFieldText(fields, 2)
+    || antigravityFieldText(fields, 3);
+}
+
+function readAntigravityMetadataFromDb(db: import("node:sqlite").DatabaseSync): {
+  projectPath: string;
+  gitBranch: string | null;
+  createdAtMs: number;
+} | null {
+  const row = db.prepare("SELECT data FROM trajectory_metadata_blob WHERE id = 'main'").get() as
+    | { data?: Uint8Array }
+    | undefined;
+  if (!row?.data) return null;
+  const outer = antigravityProtoFields(Buffer.from(row.data));
+  const workspace = antigravityFieldBytes(outer, 1);
+  const createdAt = antigravityFieldBytes(outer, 2);
+  const projectPath = workspace
+    ? antigravityFolderUriToPath(antigravityFieldText(antigravityProtoFields(workspace), 1))
+      || antigravityFolderUriToPath(antigravityFieldText(outer, 7))
+    : "";
+  const gitBranch = workspace ? antigravityFieldText(antigravityProtoFields(workspace), 4) || null : null;
+  const seconds = createdAt ? antigravityFieldVarint(antigravityProtoFields(createdAt), 1) : 0;
+  if (!projectPath && !gitBranch && seconds <= 0) return null;
+  return { projectPath, gitBranch, createdAtMs: seconds > 0 ? seconds * 1000 : 0 };
+}
+
+// The steps table carries what the display transcript drops: failed tool results,
+// per-call token usage, and the conversation title. Field numbers were verified
+// against the transcript of the same step (see the design note).
+function readAntigravityStepsFromDb(db: import("node:sqlite").DatabaseSync): Pick<
+  AntigravityConversationDb,
+  "title" | "usageByStep" | "toolCallIdsByStep" | "resultCallIdsByStep" | "failedCalls"
+> {
+  const rows = db.prepare(
+    "SELECT idx, step_type, status, step_payload, error_details FROM steps ORDER BY idx",
+  ).all() as Array<{
+    idx: number;
+    step_type: number;
+    status: number;
+    step_payload?: Uint8Array;
+    error_details?: Uint8Array;
+  }>;
+  const usageByStep = new Map<number, AntigravityTokenUsage>();
+  const toolCallIdsByStep = new Map<number, string[]>();
+  const resultCallIdsByStep = new Map<number, string>();
+  const failedCalls: AntigravityFailedCall[] = [];
+  let title = "";
+  for (const row of rows) {
+    if (!row.step_payload) continue;
+    const payload = antigravityProtoFields(Buffer.from(row.step_payload));
+    const meta = antigravityFieldBytes(payload, 5);
+    const metaFields = meta ? antigravityProtoFields(meta) : [];
+    if (row.step_type === 15) {
+      const usageMessage = antigravityFieldBytes(metaFields, 9);
+      if (usageMessage) {
+        const usageFields = antigravityProtoFields(usageMessage);
+        const usage: AntigravityTokenUsage = {
+          inputTokens: antigravityFieldVarint(usageFields, 2),
+          cachedInputTokens: antigravityFieldVarint(usageFields, 5),
+          outputTokens: antigravityFieldVarint(usageFields, 10),
+          reasoningOutputTokens: antigravityFieldVarint(usageFields, 9),
+        };
+        if (usage.inputTokens || usage.cachedInputTokens || usage.outputTokens || usage.reasoningOutputTokens) {
+          usageByStep.set(row.idx, usage);
+        }
+      }
+      const textMessage = antigravityFieldBytes(payload, 20);
+      if (textMessage) {
+        const callIds = antigravityProtoFields(textMessage)
+          .filter((field) => field.field === 7 && field.bytes)
+          .map((field) => antigravityToolCallIdentity(field.bytes ?? null))
+          .filter(Boolean);
+        if (callIds.length) toolCallIdsByStep.set(row.idx, callIds);
+      }
+      continue;
+    }
+    if (row.step_type === 23) {
+      const titleMessage = antigravityFieldBytes(payload, 30);
+      const value = titleMessage ? antigravityFieldText(antigravityProtoFields(titleMessage), 4) : "";
+      if (value) title = value;
+      continue;
+    }
+    if (row.step_type === 132) {
+      const callId = antigravityToolCallIdentity(antigravityFieldBytes(metaFields, 4));
+      if (callId) resultCallIdsByStep.set(row.idx, callId);
+      if (row.status === 3 || !callId) continue;
+      const toolError = antigravityFieldBytes(payload, 31);
+      const output = antigravityFieldBytes(payload, 140);
+      failedCalls.push({
+        callId,
+        status: row.status === 6 ? "aborted" : row.status === 7 ? "failed" : "unknown",
+        detail: (toolError ? antigravityFieldText(antigravityProtoFields(toolError), 2) : "")
+          || antigravityErrorText(row.error_details)
+          || (output ? antigravityFieldText(antigravityProtoFields(output), 2) : ""),
+        timestampMs: antigravityStepTimestampMs(metaFields),
+      });
+    }
+  }
+  return { title, usageByStep, toolCallIdsByStep, resultCallIdsByStep, failedCalls };
+}
+
+function readAntigravityConversationDb(dbPath: string): AntigravityConversationDb | null {
   let db: import("node:sqlite").DatabaseSync | null = null;
   try {
     db = new DatabaseSync(dbPath, { readOnly: true });
-    const row = db.prepare("SELECT data FROM trajectory_metadata_blob WHERE id = 'main'").get() as
-      | { data?: Uint8Array }
-      | undefined;
-    if (!row?.data) return null;
-    const outer = antigravityProtoFields(Buffer.from(row.data));
-    const workspace = outer.find((entry) => entry.field === 1 && entry.bytes)?.bytes ?? null;
-    const createdAt = outer.find((entry) => entry.field === 2 && entry.bytes)?.bytes ?? null;
-    const projectPath = workspace
-      ? antigravityFolderUriToPath(antigravityFieldText(antigravityProtoFields(workspace), 1))
-        || antigravityFolderUriToPath(antigravityFieldText(outer, 7))
-      : "";
-    const gitBranch = workspace ? antigravityFieldText(antigravityProtoFields(workspace), 4) || null : null;
-    const seconds = createdAt
-      ? antigravityProtoFields(createdAt).find((entry) => entry.field === 1)?.varint ?? 0
-      : 0;
-    if (!projectPath && !gitBranch && seconds <= 0) return null;
-    return { projectPath, gitBranch, createdAtMs: seconds > 0 ? seconds * 1000 : 0 };
+    // Metadata, steps, and their readings are independent: a version change in
+    // one table must not discard the other's contribution.
+    let metadata: ReturnType<typeof readAntigravityMetadataFromDb> = null;
+    try {
+      metadata = readAntigravityMetadataFromDb(db);
+    } catch {
+      // Keep the transcript-only fallbacks for workspace and creation time.
+    }
+    let steps: ReturnType<typeof readAntigravityStepsFromDb> = {
+      title: "",
+      usageByStep: new Map(),
+      toolCallIdsByStep: new Map(),
+      resultCallIdsByStep: new Map(),
+      failedCalls: [],
+    };
+    try {
+      steps = readAntigravityStepsFromDb(db);
+    } catch {
+      // The steps table can be absent or carry a schema this version does not know.
+    }
+    if (!metadata && !steps.title && !steps.usageByStep.size && !steps.failedCalls.length) return null;
+    return {
+      projectPath: metadata?.projectPath ?? "",
+      gitBranch: metadata?.gitBranch ?? null,
+      createdAtMs: metadata?.createdAtMs ?? 0,
+      ...steps,
+    };
   } catch {
-    // The metadata database can be missing, locked by a running Antigravity, or
-    // written by a version with a different schema; the transcript alone still
-    // yields a usable session.
+    // The database can be missing, locked by a running Antigravity, or written
+    // by a different version; the transcript alone still yields a usable session.
     return null;
   } finally {
     try {
@@ -2829,9 +2986,15 @@ function loadAntigravitySessionFile(
       return stepDelta !== 0 ? stepDelta : left.arrival - right.arrival;
     });
 
+  const conversationDb = readAntigravityConversationDb(
+    path.join(root, "conversations", `${conversationId}.db`),
+  );
   const messages: SessionMessage[] = [];
   const traceDrafts: TraceEventDraft[] = [];
+  const tokenEntries = new Map<string, TokenUsageEvent>();
   const pendingCalls: Array<{ callId: string; title: string }> = [];
+  const createdAtByStep = new Map<number, string>();
+  const transcriptCallsByRealId = new Map<string, { callId: string; title: string; timestamp: string }>();
   let firstMs = 0;
   let lastMs = 0;
   for (const { row } of entries) {
@@ -2841,6 +3004,7 @@ function loadAntigravitySessionFile(
       firstMs ||= createdMs;
       lastMs = createdMs;
     }
+    if (timestamp) createdAtByStep.set(numberField(row, "step_index"), timestamp);
     const type = stringField(row, "type");
     const content = stringField(row, "content");
     const thinking = stringField(row, "thinking");
@@ -2882,6 +3046,8 @@ function loadAntigravitySessionFile(
           status: "running",
         });
         pendingCalls.push({ callId, title });
+        const realId = conversationDb?.toolCallIdsByStep.get(stepIndex)?.[position];
+        if (realId) transcriptCallsByRealId.set(realId, { callId, title, timestamp });
       });
     }
     if (type === "USER_INPUT") {
@@ -2892,9 +3058,13 @@ function loadAntigravitySessionFile(
       continue;
     }
     if (type === "GENERIC") {
-      // Generic model steps carry tool output; sequential pairing survives the
-      // mixed PascalCase/lowercase argument shapes without inspecting them.
-      const pending = pendingCalls.shift() ?? null;
+      // Generic model steps carry tool output. Failed result steps are absent
+      // from the transcript, so sequential pairing alone would attach results
+      // to the wrong calls; the database knows each result's real call id.
+      const realResultId = conversationDb?.resultCallIdsByStep.get(stepIndex);
+      const exactCallId = realResultId ? transcriptCallsByRealId.get(realResultId)?.callId ?? null : null;
+      const exactIndex = exactCallId ? pendingCalls.findIndex((entry) => entry.callId === exactCallId) : -1;
+      const pending = exactIndex >= 0 ? pendingCalls.splice(exactIndex, 1)[0] : pendingCalls.shift() ?? null;
       const body = antigravityToolResultBody(content);
       if (pending) {
         traceDrafts.push({
@@ -2958,11 +3128,37 @@ function loadAntigravitySessionFile(
     // Unknown entry types are ignored so a format change cannot fail the batch.
   }
 
+  // Failed and aborted tool steps never reach the transcript; the database holds
+  // their result and the error the user saw.
+  for (const failed of conversationDb?.failedCalls ?? []) {
+    const call = transcriptCallsByRealId.get(failed.callId);
+    if (!call) continue;
+    traceDrafts.push({
+      kind: "tool_result",
+      source: "antigravity",
+      title: call.title,
+      detail: stringifyDetail(failed.detail),
+      timestamp: failed.timestampMs > 0 ? timestampString(failed.timestampMs) : call.timestamp,
+      callId: call.callId,
+      eventType: "antigravity.toolResult",
+      status: failed.status,
+    });
+  }
+  for (const [stepIndex, usage] of conversationDb?.usageByStep ?? []) {
+    const timestamp = createdAtByStep.get(stepIndex);
+    if (!timestamp) continue;
+    putTokenEvent(tokenEntries, tokenEvent(
+      timestampMs(timestamp),
+      `antigravity:${stepIndex}`,
+      usage.inputTokens,
+      usage.outputTokens,
+      usage.cachedInputTokens,
+      usage.reasoningOutputTokens,
+    ));
+  }
+
   if (!messages.length) return null;
   const question = firstQuestion(messages);
-  const metadata = readAntigravityConversationMetadata(
-    path.join(root, "conversations", `${conversationId}.db`),
-  );
   const annotationTitle = readAntigravityAnnotationTitle(
     path.join(root, "annotations", `${conversationId}.pbtxt`),
   );
@@ -2971,15 +3167,17 @@ function loadAntigravitySessionFile(
       keyPrefix: "antigravity",
       rawId: conversationId,
       source: "antigravity",
-      projectPath: metadata?.projectPath || filePath,
+      projectPath: conversationDb?.projectPath || filePath,
       filePath,
-      originalTitle: annotationTitle || cleanTitle(question) || conversationId,
+      originalTitle: annotationTitle || conversationDb?.title || cleanTitle(question) || conversationId,
       firstQuestion: cleanTitle(question),
-      gitBranch: metadata?.gitBranch ?? null,
-      timestamp: metadata?.createdAtMs || firstMs || lastMs || stat.mtimeMs,
+      gitBranch: conversationDb?.gitBranch ?? null,
+      timestamp: conversationDb?.createdAtMs || firstMs || lastMs || stat.mtimeMs,
+      tokenUsage: tokenUsageFromEvents([...tokenEntries.values()]),
       stat,
     }),
     messages,
+    tokenEvents: [...tokenEntries.values()],
     traceEvents: dedupeTraceEvents(traceDrafts),
   };
 }
