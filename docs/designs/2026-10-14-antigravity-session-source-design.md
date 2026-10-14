@@ -145,4 +145,5 @@ DB `steps.step_type` 与转录类型的对应（逐条 join 验证）：`14→US
 
 - [rajbos/ai-engineering-fluency · antigravity-session-format.md](https://github.com/rajbos/ai-engineering-fluency/blob/main/docs/logFilesSchema/antigravity-session-format.md)：转录字段与 `<USER_REQUEST>` 结构的公开格式说明；其中记录的 `conversations/*.pb` 已被本机的 `*.db` 取代。
 - [shubzkothekar/antigravity-acp](https://github.com/shubzkothekar/antigravity-acp)：CLI 会话 DB 读取与恢复出的 protobuf 定义，供 Phase 2 参考。
+- [ccusage/ccusage · rust/adapters/antigravity](https://github.com/ccusage/ccusage/tree/main/rust/adapters/antigravity)：独立实现的用量适配器，其 token 分桶（input / total_output / cache_read / reasoning / visible_output）与本机验证的字段 2/3/5/9/10 完全对应；同时列出六个候选数据根目录（`.gemini/antigravity`、`-cli`、`-ide`、`-backup`、`-acp`、`.config/antigravity`）与 `ANTIGRAVITY_DATA_DIR` 覆盖，可作为后续多根目录支持的输入。
 - [router-for-me/CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI)、[Pika-Yalei/antigravity-decryptor](https://github.com/Pika-Yalei/antigravity-decryptor)：经语言服务器访问 Antigravity，依赖运行时进程，不适用于离线只读索引。
