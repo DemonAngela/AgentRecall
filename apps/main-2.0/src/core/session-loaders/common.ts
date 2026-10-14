@@ -39,6 +39,7 @@ export interface SessionLoadOptions {
   includeKimiCli?: boolean;
   includeQwenCode?: boolean;
   includeGeminiCli?: boolean;
+  includeAntigravity?: boolean;
   includeDeepSeekCli?: boolean;
   cursorStateDbPath?: string;
   cursorWorkspacePathMap?: ReadonlyMap<string, string>;
@@ -327,7 +328,8 @@ export function createIndexedSession(input: {
     | "kimi"
     | "qwen"
     | "gemini"
-    | "deepseek";
+    | "deepseek"
+    | "antigravity";
   rawId: string;
   source: SessionSource;
   projectPath: string;

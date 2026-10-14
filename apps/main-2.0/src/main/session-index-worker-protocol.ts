@@ -11,7 +11,7 @@ export type SessionIndexWorkerOptions = Pick<SessionLoadOptions,
   | "homeDir" | "includeStepcode" | "includeTclaude" | "includeTcodex"
   | "includeCodeBuddyCli" | "includeWorkBuddy" | "includeCodeWizCli"
   | "includeOpenClaw" | "includeHermes" | "includeOpenCode" | "includeZcode"
-  | "includePi" | "includeKimiCli" | "includeQwenCode" | "includeGeminiCli"
+  | "includePi" | "includeKimiCli" | "includeQwenCode" | "includeGeminiCli" | "includeAntigravity"
   | "includeCursorAgent" | "includeTrae" | "includeQoder" | "includeQoderIde" | "includeDeepSeekCli"
 >;
 

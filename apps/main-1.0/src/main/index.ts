@@ -1333,6 +1333,7 @@ function runIndexSync(): Promise<IndexStatus> {
         includeKimiCli: settings.includeKimiCli,
         includeQwenCode: settings.includeQwenCode,
         includeGeminiCli: settings.includeGeminiCli,
+        includeAntigravity: settings.includeAntigravity,
         includeCursorAgent: settings.includeCursorAgent,
         includeTrae: settings.includeTrae,
         includeQoder: settings.includeQoder,
@@ -2311,7 +2312,7 @@ function registerIpc(): void {
     if (confirmed && !confirmationFingerprint) {
       throw new Error(SESSION_DELETE_CONFIRMATION_REQUIRED_MESSAGE);
     }
-    if (session?.source === "workbuddy-cli" || session?.source === "kimi-cli" || session?.source === "qwen-code" || session?.source === "gemini-cli") {
+    if (session?.source === "workbuddy-cli" || session?.source === "kimi-cli" || session?.source === "qwen-code" || session?.source === "gemini-cli" || session?.source === "antigravity") {
       throw new Error(`${sessionSourceDescriptor(session.source).label} session source files are read-only.`);
     }
     if (session && !canDeleteSessionLocally(session)) {

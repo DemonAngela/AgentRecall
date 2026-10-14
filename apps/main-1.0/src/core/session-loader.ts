@@ -4,6 +4,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { createHash } from "node:crypto";
 import { createRequire } from "node:module";
+import { fileURLToPath } from "node:url";
 import {
   cleanTitle,
   cursorTimestampFromRow,
@@ -95,6 +96,7 @@ export interface SessionLoadOptions {
   includeKimiCli?: boolean;
   includeQwenCode?: boolean;
   includeGeminiCli?: boolean;
+  includeAntigravity?: boolean;
   includeTclaude?: boolean;
   includeTcodex?: boolean;
   includeCodeBuddyCli?: boolean;
@@ -1521,7 +1523,7 @@ function readGitBranchAt(gitPath: string): string | null {
 }
 
 function createIndexedSession(input: {
-  keyPrefix: "claude" | "codex" | "tclaude" | "tcodex" | "codebuddy" | "workbuddy" | "codewiz" | "openclaw" | "hermes" | "opencode" | "zcode" | "cursor" | "trae" | "qoder" | "qoder-ide" | "pi" | "deepseek" | "kimi" | "qwen" | "gemini";
+  keyPrefix: "claude" | "codex" | "tclaude" | "tcodex" | "codebuddy" | "workbuddy" | "codewiz" | "openclaw" | "hermes" | "opencode" | "zcode" | "cursor" | "trae" | "qoder" | "qoder-ide" | "pi" | "deepseek" | "kimi" | "qwen" | "gemini" | "antigravity";
   rawId: string;
   source: SessionSource;
   projectPath: string;
@@ -2635,6 +2637,376 @@ function* loadGeminiCliSessionsIterator(root: string, options: SessionLoadOption
         if (loaded) yield loaded;
       }
     }
+  }
+}
+
+const ANTIGRAVITY_DIR = "antigravity";
+
+// Antigravity appends transcript entries when a step finishes writing, so a tool
+// result can precede the planner response that requested it in file order.
+// step_index is the only reliable conversation order.
+function antigravityTranscriptPath(logsDir: string): string | null {
+  for (const name of ["transcript_full.jsonl", "transcript.jsonl"]) {
+    const candidate = path.join(logsDir, name);
+    if (fs.existsSync(candidate)) return candidate;
+  }
+  return null;
+}
+
+function antigravityReadVarint(buffer: Buffer, offset: number): [number, number] | null {
+  let value = 0;
+  let shift = 0;
+  let index = offset;
+  while (index < buffer.length) {
+    const byte = buffer[index];
+    index += 1;
+    value += (byte & 0x7f) * 2 ** shift;
+    if ((byte & 0x80) === 0) return [value, index];
+    shift += 7;
+    if (shift > 63) return null;
+  }
+  return null;
+}
+
+interface AntigravityProtoField {
+  field: number;
+  varint: number;
+  bytes: Buffer | null;
+}
+
+// The conversation metadata blob is protobuf, but only a few scalars are used
+// (workspace URI, branch, creation time). Decoding the wire format directly
+// avoids pinning a generated schema that Google never published.
+function antigravityProtoFields(buffer: Buffer): AntigravityProtoField[] {
+  const fields: AntigravityProtoField[] = [];
+  let index = 0;
+  while (index < buffer.length) {
+    const tag = antigravityReadVarint(buffer, index);
+    if (!tag) return fields;
+    index = tag[1];
+    const field = Math.floor(tag[0] / 8);
+    const wire = tag[0] % 8;
+    if (wire === 0) {
+      const value = antigravityReadVarint(buffer, index);
+      if (!value) return fields;
+      index = value[1];
+      fields.push({ field, varint: value[0], bytes: null });
+      continue;
+    }
+    if (wire === 2) {
+      const length = antigravityReadVarint(buffer, index);
+      if (!length) return fields;
+      const end = length[1] + length[0];
+      if (end > buffer.length) return fields;
+      fields.push({ field, varint: 0, bytes: buffer.subarray(length[1], end) });
+      index = end;
+      continue;
+    }
+    if (wire === 5) {
+      index += 4;
+      continue;
+    }
+    if (wire === 1) {
+      index += 8;
+      continue;
+    }
+    // Groups are not part of this format; stop instead of guessing lengths.
+    return fields;
+  }
+  return fields;
+}
+
+function antigravityFieldText(fields: AntigravityProtoField[], field: number): string {
+  return fields.find((entry) => entry.field === field && entry.bytes)?.bytes?.toString("utf8").trim() ?? "";
+}
+
+function antigravityFolderUriToPath(uri: string): string {
+  if (!uri.startsWith("file://")) return "";
+  try {
+    return fileURLToPath(new URL(uri));
+  } catch {
+    return "";
+  }
+}
+
+interface AntigravityConversationMetadata {
+  projectPath: string;
+  gitBranch: string | null;
+  createdAtMs: number;
+}
+
+function readAntigravityConversationMetadata(dbPath: string): AntigravityConversationMetadata | null {
+  let db: import("node:sqlite").DatabaseSync | null = null;
+  try {
+    db = new DatabaseSync(dbPath, { readOnly: true });
+    const row = db.prepare("SELECT data FROM trajectory_metadata_blob WHERE id = 'main'").get() as
+      | { data?: Uint8Array }
+      | undefined;
+    if (!row?.data) return null;
+    const outer = antigravityProtoFields(Buffer.from(row.data));
+    const workspace = outer.find((entry) => entry.field === 1 && entry.bytes)?.bytes ?? null;
+    const createdAt = outer.find((entry) => entry.field === 2 && entry.bytes)?.bytes ?? null;
+    const projectPath = workspace
+      ? antigravityFolderUriToPath(antigravityFieldText(antigravityProtoFields(workspace), 1))
+        || antigravityFolderUriToPath(antigravityFieldText(outer, 7))
+      : "";
+    const gitBranch = workspace ? antigravityFieldText(antigravityProtoFields(workspace), 4) || null : null;
+    const seconds = createdAt
+      ? antigravityProtoFields(createdAt).find((entry) => entry.field === 1)?.varint ?? 0
+      : 0;
+    if (!projectPath && !gitBranch && seconds <= 0) return null;
+    return { projectPath, gitBranch, createdAtMs: seconds > 0 ? seconds * 1000 : 0 };
+  } catch {
+    // The metadata database can be missing, locked by a running Antigravity, or
+    // written by a version with a different schema; the transcript alone still
+    // yields a usable session.
+    return null;
+  } finally {
+    try {
+      db?.close();
+    } catch {
+      // Closing a read-only handle has no recovery path; the file lock is released on process exit.
+    }
+  }
+}
+
+function antigravityUnescapeProtoText(value: string): string {
+  return value.replace(/\\(u[0-9a-fA-F]{4}|x[0-9a-fA-F]{2}|.)/gu, (match, escape: string) => {
+    if (escape === "n") return "\n";
+    if (escape === "r") return "\r";
+    if (escape === "t") return "\t";
+    if (escape === '"' || escape === "'" || escape === "\\") return escape;
+    if (escape.startsWith("u") || escape.startsWith("x")) {
+      const code = Number.parseInt(escape.slice(1), 16);
+      return Number.isFinite(code) ? String.fromCharCode(code) : match;
+    }
+    return match;
+  });
+}
+
+function readAntigravityAnnotationTitle(annotationPath: string): string {
+  let text = "";
+  try {
+    text = fs.readFileSync(annotationPath, "utf8");
+  } catch {
+    return "";
+  }
+  const raw = /(?:^|\s)title:\s*"((?:[^"\\]|\\.)*)"/u.exec(text)?.[1] ?? "";
+  return raw ? antigravityUnescapeProtoText(raw).trim() : "";
+}
+
+function antigravityUserRequestText(content: string): string {
+  const match = /<USER_REQUEST>([\s\S]*?)<\/USER_REQUEST>/u.exec(content);
+  return (match?.[1] ?? content).trim();
+}
+
+function antigravitySystemMessageBody(content: string): string {
+  // The preamble names the tag before the real block, so anchor on the closing
+  // tag and take the nearest preceding opening tag.
+  const close = content.lastIndexOf("</SYSTEM_MESSAGE>");
+  const open = close >= 0 ? content.lastIndexOf("<SYSTEM_MESSAGE>", close) : -1;
+  if (open >= 0 && close > open) return content.slice(open + "<SYSTEM_MESSAGE>".length, close).trim();
+  return content.trim();
+}
+
+// Tool results prefix Created At/Completed At lines before the payload.
+function antigravityToolResultBody(content: string): string {
+  return content.replace(/^(?:Created At:[^\n]*\n)?(?:Completed At:[^\n]*\n)?/u, "").trim();
+}
+
+function loadAntigravitySessionFile(
+  filePath: string,
+  conversationId: string,
+  root: string,
+  stat: VirtualSessionFileStat,
+): LoadedSession | null {
+  const rows = readJsonl(filePath).filter(isRecord);
+  if (!rows.length) return null;
+  const entries = rows
+    .map((row, arrival) => ({ row, arrival }))
+    .sort((left, right) => {
+      const stepDelta = numberField(left.row, "step_index") - numberField(right.row, "step_index");
+      return stepDelta !== 0 ? stepDelta : left.arrival - right.arrival;
+    });
+
+  const messages: SessionMessage[] = [];
+  const traceDrafts: TraceEventDraft[] = [];
+  const pendingCalls: Array<{ callId: string; title: string }> = [];
+  let firstMs = 0;
+  let lastMs = 0;
+  for (const { row } of entries) {
+    const timestamp = stringField(row, "created_at");
+    const createdMs = timestampMs(timestamp);
+    if (createdMs > 0) {
+      firstMs ||= createdMs;
+      lastMs = createdMs;
+    }
+    const type = stringField(row, "type");
+    const content = stringField(row, "content");
+    const thinking = stringField(row, "thinking");
+    const stepIndex = numberField(row, "step_index");
+    if (thinking.trim()) {
+      traceDrafts.push({
+        kind: "event",
+        source: "antigravity",
+        title: "Thinking",
+        detail: stringifyDetail(thinking),
+        timestamp,
+        callId: null,
+        eventType: "antigravity.thought",
+        status: "unknown",
+      });
+    }
+    const toolCalls = unknownField(row, "tool_calls");
+    if (Array.isArray(toolCalls)) {
+      toolCalls.forEach((call, position) => {
+        if (!isRecord(call)) return;
+        const name = stringField(call, "name") || "tool";
+        const args = objectField(call, "args");
+        const callId = `antigravity:${stepIndex}:${position}`;
+        const title = normalizeTraceTitle(
+          name,
+          firstStringField(args, [
+            "toolSummary", "toolAction", "CommandLine", "AbsolutePath", "DirectoryPath",
+            "TargetFile", "Query", "query", "Prompt", "Message",
+          ]),
+        );
+        traceDrafts.push({
+          kind: "tool_call",
+          source: "antigravity",
+          title,
+          detail: stringifyDetail(args),
+          timestamp,
+          callId,
+          eventType: "antigravity.toolCall",
+          status: "running",
+        });
+        pendingCalls.push({ callId, title });
+      });
+    }
+    if (type === "USER_INPUT") {
+      const request = antigravityUserRequestText(content);
+      if (isMeaningfulUserMessage(request)) {
+        messages.push(messageFromParts("user", request, timestamp, messages.length));
+      }
+      continue;
+    }
+    if (type === "GENERIC") {
+      // Generic model steps carry tool output; sequential pairing survives the
+      // mixed PascalCase/lowercase argument shapes without inspecting them.
+      const pending = pendingCalls.shift() ?? null;
+      const body = antigravityToolResultBody(content);
+      if (pending) {
+        traceDrafts.push({
+          kind: "tool_result",
+          source: "antigravity",
+          title: pending.title,
+          detail: stringifyDetail(body),
+          timestamp,
+          callId: pending.callId,
+          eventType: "antigravity.toolResult",
+          status: "completed",
+        });
+        continue;
+      }
+      if (body) messages.push(messageFromParts("assistant", body, timestamp, messages.length));
+      continue;
+    }
+    if (!content.trim()) continue;
+    if (type === "PLANNER_RESPONSE") {
+      messages.push(messageFromParts("assistant", content, timestamp, messages.length));
+      continue;
+    }
+    if (type === "CHECKPOINT") {
+      traceDrafts.push({
+        kind: "event",
+        source: "antigravity",
+        title: "Context checkpoint",
+        detail: stringifyDetail(content),
+        timestamp,
+        callId: null,
+        eventType: "antigravity.context.compaction",
+        status: "completed",
+      });
+      continue;
+    }
+    if (type === "ERROR_MESSAGE") {
+      traceDrafts.push({
+        kind: "event",
+        source: "antigravity",
+        title: "Error",
+        detail: stringifyDetail(content),
+        timestamp,
+        callId: null,
+        eventType: "antigravity.error",
+        status: "failed",
+      });
+      continue;
+    }
+    if (type === "SYSTEM_MESSAGE") {
+      traceDrafts.push({
+        kind: "event",
+        source: "antigravity",
+        title: "Agent message",
+        detail: stringifyDetail(antigravitySystemMessageBody(content)),
+        timestamp,
+        callId: null,
+        eventType: "antigravity.collaboration.message",
+        status: "unknown",
+      });
+    }
+    // Unknown entry types are ignored so a format change cannot fail the batch.
+  }
+
+  if (!messages.length) return null;
+  const question = firstQuestion(messages);
+  const metadata = readAntigravityConversationMetadata(
+    path.join(root, "conversations", `${conversationId}.db`),
+  );
+  const annotationTitle = readAntigravityAnnotationTitle(
+    path.join(root, "annotations", `${conversationId}.pbtxt`),
+  );
+  return {
+    session: createIndexedSession({
+      keyPrefix: "antigravity",
+      rawId: conversationId,
+      source: "antigravity",
+      projectPath: metadata?.projectPath || filePath,
+      filePath,
+      originalTitle: annotationTitle || cleanTitle(question) || conversationId,
+      firstQuestion: cleanTitle(question),
+      gitBranch: metadata?.gitBranch ?? null,
+      timestamp: metadata?.createdAtMs || firstMs || lastMs || stat.mtimeMs,
+      stat,
+    }),
+    messages,
+    traceEvents: dedupeTraceEvents(traceDrafts),
+  };
+}
+
+function* loadAntigravitySessionsIterator(root: string, options: SessionLoadOptions): Generator<LoadedSession> {
+  const brainRoot = path.join(root, "brain");
+  let conversationDirs: fs.Dirent[];
+  try {
+    conversationDirs = fs.readdirSync(brainRoot, { withFileTypes: true });
+  } catch {
+    return;
+  }
+  for (const entry of conversationDirs) {
+    if (!entry.isDirectory() || entry.name.startsWith(".")) continue;
+    const logsDir = path.join(brainRoot, entry.name, ".system_generated", "logs");
+    const transcriptPath = antigravityTranscriptPath(logsDir);
+    if (!transcriptPath) continue;
+    const stat = safeStat(transcriptPath);
+    // Workspace and title live in sibling metadata files, so their mtimes join
+    // the change check; a file that never was indexed still passes it.
+    const dependencyMtimeMs = Math.max(
+      safeStat(path.join(root, "conversations", `${entry.name}.db`)).mtimeMs,
+      safeStat(path.join(root, "annotations", `${entry.name}.pbtxt`)).mtimeMs,
+    );
+    if (shouldSkipFile(options, transcriptPath, stat, dependencyMtimeMs)) continue;
+    const loaded = loadAntigravitySessionFile(transcriptPath, entry.name, root, stat);
+    if (loaded) yield loaded;
   }
 }
 
@@ -5156,6 +5528,9 @@ export function* loadDefaultSessionsIterator(options: SessionLoadOptions = {}): 
   if (options.includeGeminiCli) {
     yield* loadGeminiCliSessionsIterator(resolveGeminiCliRoot(homeDir, options), options);
   }
+  if (options.includeAntigravity) {
+    yield* loadAntigravitySessionsIterator(path.join(homeDir, GEMINI_DIR, ANTIGRAVITY_DIR), options);
+  }
   if (options.includeOpenClaw) {
     yield* loadOpenClawSessionsIterator(path.join(homeDir, ".openclaw"), options);
     yield* loadOpenClawSessionsIterator(path.join(homeDir, ".clawdbot"), options);
@@ -5215,6 +5590,9 @@ export async function* loadDefaultSessionsAsyncIterator(options: SessionLoadOpti
   }
   if (options.includeGeminiCli) {
     yield* isolated(["gemini-cli"], () => loadGeminiCliSessionsIterator(resolveGeminiCliRoot(homeDir, options), options));
+  }
+  if (options.includeAntigravity) {
+    yield* isolated(["antigravity"], () => loadAntigravitySessionsIterator(path.join(homeDir, GEMINI_DIR, ANTIGRAVITY_DIR), options));
   }
   if (options.includeOpenClaw) {
     yield* isolated(["openclaw"], () => loadOpenClawSessionsIterator(path.join(homeDir, ".openclaw"), options));

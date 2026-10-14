@@ -19,7 +19,8 @@ export type OptionalSessionSourceSetting =
   | "includeKimiCli"
   | "includeQwenCode"
   | "includeGeminiCli"
-  | "includeDeepSeekCli";
+  | "includeDeepSeekCli"
+  | "includeAntigravity";
 
 export type SessionSourceFamily =
   | "claude"
@@ -42,7 +43,8 @@ export type SessionSourceFamily =
   | "kimi"
   | "qwen"
   | "gemini"
-  | "deepseek";
+  | "deepseek"
+  | "antigravity";
 
 export type SessionSourceUiFamily = "claude" | "codex" | "codebuddy" | "codewiz" | "zcode" | "other";
 
@@ -219,6 +221,12 @@ export const SESSION_SOURCE_REGISTRY = {
     optionalSetting: "includeDeepSeekCli", pendingKey: "deepseek", remoteCollectorOptional: false, liveFamily: null, migrationAgent: "deepseek",
     resumeTarget: "deepseek", remoteFamily: null, nativeAppFamily: null,
     capabilities: { live: false, resume: true, migrate: true, sessionSync: false, openApp: false },
+  },
+  antigravity: {
+    id: "antigravity", label: "Antigravity", format: "antigravity", family: "antigravity", uiFamily: "other", statsGroup: null,
+    optionalSetting: "includeAntigravity", pendingKey: "antigravity", remoteCollectorOptional: false, liveFamily: null, migrationAgent: null,
+    resumeTarget: null, remoteFamily: null, nativeAppFamily: null,
+    capabilities: { live: false, resume: false, migrate: false, sessionSync: false, openApp: false },
   },
 } as const satisfies Record<SessionSource, SessionSourceDescriptor>;
 

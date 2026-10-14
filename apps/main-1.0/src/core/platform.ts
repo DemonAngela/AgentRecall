@@ -98,6 +98,7 @@ export interface AppSettings {
   includeQwenCode: boolean;
   includeGeminiCli: boolean;
   includeDeepSeekCli: boolean;
+  includeAntigravity: boolean;
   rulesSyncEnabled: boolean;
   memoriesSyncEnabled: boolean;
   hideCodexQuota: boolean;
@@ -177,6 +178,7 @@ export const defaultSettings: AppSettings = {
   includeQwenCode: false,
   includeGeminiCli: false,
   includeDeepSeekCli: false,
+  includeAntigravity: false,
   rulesSyncEnabled: false,
   memoriesSyncEnabled: false,
   hideCodexQuota: false,
