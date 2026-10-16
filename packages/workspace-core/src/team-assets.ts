@@ -236,6 +236,13 @@ export class TeamAssetService {
       for (const input of inputs) {
         const change = assetChangeSchema.parse(input);
         if (change.kind === "batch") throw new WorkspaceError("INVALID_ARGUMENTS", "请选择单项资源。");
+        if (change.kind === "environment") {
+          const names = [
+            ...("instructions" in baseline ? baseline.environment.map(item => item.name) : []),
+            ...entries.flatMap(entry => entry.change.kind === "environment" ? [entry.change.value.name] : []),
+          ];
+          if (names.some(name => name.toUpperCase() === change.value.name.toUpperCase() && name !== change.value.name)) throw new WorkspaceError("CONFIGURATION_EXISTS", "已有名称仅大小写不同的变量，请使用原名称编辑。");
+        }
         const key = localAssetKey(change);
         const index = entries.findIndex(entry => localAssetKey(entry.change) === key);
         const before = this.previous(baseline, change);

@@ -466,6 +466,8 @@ it("saves a configuration through IPC and reads the same local value and Diff wi
   const change = { kind: "environment" as const, operation: "create" as const, value: { name: "TEAM_MODE", value: "local", targets: ["codex" as const] } };
   const saved = await api.request({ action: "workspace-stage", scope, items: [{ kind: "configuration", key: "draft", change }] });
   expect(saved).toMatchObject({ ok: true, data: { kind: "workspace-changes", value: [{ item: { kind: "local-resource", key: "environment:TEAM_MODE" } }] } });
+  const collision = { ...change, value: { ...change.value, name: "team_mode", value: "replacement" } };
+  expect(await api.request({ action: "workspace-stage", scope, items: [{ kind: "configuration", key: "collision", change: collision }] })).toMatchObject({ ok: false, error: { code: "CONFIGURATION_EXISTS" } });
   expect(await api.request({ action: "catalog", scope })).toMatchObject({ ok: true, data: { kind: "catalog", value: { assets: { configuration: { environment: [change.value] } } } } });
   expect(await api.request({ action: "push-inspect", scope, revision, item: { kind: "local-resource", key: "environment:TEAM_MODE" } })).toMatchObject({ ok: true, data: { kind: "push-inspection", value: { item: { status: "added" } } } });
   const folder = path.join(root, "source-documents");
