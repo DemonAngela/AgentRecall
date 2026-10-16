@@ -2728,6 +2728,8 @@ function antigravityFolderUriToPath(uri: string): string {
   try {
     return fileURLToPath(new URL(uri));
   } catch {
+    // A malformed or non-URL folder id from an older build: the caller falls back
+    // to the transcript path, which is a usable project identity.
     return "";
   }
 }
@@ -2835,8 +2837,10 @@ function readAntigravityStepsFromDb(db: import("node:sqlite").DatabaseSync): Pic
   AntigravityConversationDb,
   "title" | "usageByStep" | "toolCallIdsByStep" | "resultCallIdsByStep" | "failedCalls"
 > {
+  // Only 15 (model step), 23 (title) and 132 (tool result) carry anything this
+  // reader uses; tool result payloads are large, so filter before decoding.
   const rows = db.prepare(
-    "SELECT idx, step_type, status, step_payload, error_details FROM steps ORDER BY idx",
+    "SELECT idx, step_type, status, step_payload, error_details FROM steps WHERE step_type IN (15, 23, 132) ORDER BY idx",
   ).all() as Array<{
     idx: number;
     step_type: number;
@@ -2904,9 +2908,11 @@ function readAntigravityStepsFromDb(db: import("node:sqlite").DatabaseSync): Pic
 }
 
 function readAntigravityConversationDb(dbPath: string): AntigravityConversationDb | null {
-  let db: import("node:sqlite").DatabaseSync | null = null;
+  // The shared helper skips a missing file and waits out a writer lock, which is
+  // the usual state while Antigravity is running and indexing happens.
+  const db = readOnlyDatabase(dbPath);
+  if (!db) return null;
   try {
-    db = new DatabaseSync(dbPath, { readOnly: true });
     // Metadata, steps, and their readings are independent: a version change in
     // one table must not discard the other's contribution.
     let metadata: ReturnType<typeof readAntigravityMetadataFromDb> = null;
@@ -2937,12 +2943,13 @@ function readAntigravityConversationDb(dbPath: string): AntigravityConversationD
       ...steps,
     };
   } catch {
-    // The database can be missing, locked by a running Antigravity, or written
-    // by a different version; the transcript alone still yields a usable session.
+    // A read that fails after a successful open means the file is being rewritten
+    // or the schema is beyond this reader; the transcript alone still yields a
+    // usable session, so the enrichment is dropped instead of failing the load.
     return null;
   } finally {
     try {
-      db?.close();
+      db.close();
     } catch {
       // Closing a read-only handle has no recovery path; the file lock is released on process exit.
     }
@@ -2968,6 +2975,8 @@ function readAntigravityAnnotationTitle(annotationPath: string): string {
   try {
     text = fs.readFileSync(annotationPath, "utf8");
   } catch {
+    // Most conversations have no annotation file, and a deleted one is expected
+    // too; the caller falls back to the database title or the first question.
     return "";
   }
   const raw = /(?:^|\s)title:\s*"((?:[^"\\]|\\.)*)"/u.exec(text)?.[1] ?? "";
@@ -3237,17 +3246,15 @@ function loadAntigravitySessionFile(
 
 // Desktop Antigravity and the `agy` CLI share the same brain layout, transcript
 // format, and step database; only the root directory and source id differ.
-function antigravitySourceForRoot(root: string): SessionSource {
-  return path.basename(root) === ANTIGRAVITY_CLI_DIR ? "antigravity-cli" : "antigravity";
-}
-
 function* loadAntigravitySessionsIterator(root: string, options: SessionLoadOptions): Generator<LoadedSession> {
-  const source = antigravitySourceForRoot(root);
+  const source: SessionSource = path.basename(root) === ANTIGRAVITY_CLI_DIR ? "antigravity-cli" : "antigravity";
   const brainRoot = path.join(root, "brain");
   let conversationDirs: fs.Dirent[];
   try {
     conversationDirs = fs.readdirSync(brainRoot, { withFileTypes: true });
   } catch {
+    // An absent brain directory means this Antigravity install (desktop or CLI)
+    // has never recorded a conversation, which is an empty source, not a failure.
     return;
   }
   for (const entry of conversationDirs) {

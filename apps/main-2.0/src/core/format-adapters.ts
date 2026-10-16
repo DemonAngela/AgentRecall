@@ -428,9 +428,11 @@ function antigravityParsedLine(raw: unknown): ParsedLine {
       const request = /<USER_REQUEST>([\s\S]*?)<\/USER_REQUEST>/u.exec(content);
       return { role: "user", content: (request?.[1] ?? content).trim(), timestamp };
     }
-    if (type === "PLANNER_RESPONSE" || type === "GENERIC") {
+    if (type === "PLANNER_RESPONSE") {
       return { role: "assistant", content, timestamp };
     }
+    // GENERIC rows are tool results: the loaders project them as trace events, so
+    // a generic message path must not read them as model text.
     return null;
 }
 

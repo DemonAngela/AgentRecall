@@ -42,7 +42,7 @@
 
 ## 验证入口
 
-[V1 索引器测试](../../apps/main-1.0/src/core/indexer.test.ts)和 [V2 索引器测试](../../apps/main-2.0/src/core/indexer.test.ts)覆盖跳过未变化文件、Codex 追加读取、重建、标题刷新和来源删除差异；对应 [V1 loader 测试](../../apps/main-1.0/src/core/session-loader.test.ts)和 [V2 loader 测试](../../apps/main-2.0/src/core/session-loader.test.ts)覆盖格式与读取边界。新增来源或修改增量逻辑时检查两个版本，按风险选择相关测试。测试数据必须隔离真实用户目录。
+[V1 索引器测试](../../apps/main-1.0/src/core/indexer.test.ts)和 [V2 索引器测试](../../apps/main-2.0/src/core/indexer.test.ts)覆盖跳过未变化文件、Codex 追加读取、重建、标题刷新和来源删除差异；对应 [V1 loader 测试](../../apps/main-1.0/src/core/session-loader.test.ts)和 [V2 loader 测试](../../apps/main-2.0/src/core/session-loader.test.ts)覆盖格式与读取边界；[Antigravity loader 测试](../../apps/main-1.0/src/core/session-loader-antigravity.test.ts)覆盖该来源的转录顺序、工具配对、元数据依赖重读与父子关系。新增来源或修改增量逻辑时检查两个版本，按风险选择相关测试。测试数据必须隔离真实用户目录。
 
 ## 索引对象与身份
 

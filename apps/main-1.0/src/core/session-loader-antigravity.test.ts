@@ -4,7 +4,10 @@ import * as os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
+import { getAdapter } from "./format-adapters";
+import { syncDefaultSessionsInBatches } from "./indexer";
 import { loadDefaultSessions } from "./session-loader";
+import { SessionStore } from "./session-store";
 
 const require = createRequire(import.meta.url);
 const { DatabaseSync } = require("node:sqlite") as { DatabaseSync: new (path: string) => import("node:sqlite").DatabaseSync };
@@ -112,6 +115,12 @@ function failedToolPayload(realCallId: string, errorText: string, timestampSecon
     ])),
     protoLengthDelimited(31, protoString(2, errorText)),
   ]);
+}
+
+function setDatabaseTitle(dbPath: string, title: string): void {
+  const db = new DatabaseSync(dbPath);
+  db.prepare("UPDATE steps SET step_payload = ? WHERE step_type = 23").run(titlePayload(title));
+  db.close();
 }
 
 function titlePayload(title: string): Buffer {
@@ -428,5 +437,54 @@ describe("Antigravity sessions", () => {
 
     expect(loadDefaultSessions({ homeDir: root })).toHaveLength(0);
     expect(loadDefaultSessions({ homeDir: root, includeAntigravity: true })).toHaveLength(1);
+  });
+  it("maps shared-format rows the way the loaders do", () => {
+    expect(getAdapter("antigravity").parseLine({
+      type: "USER_INPUT",
+      content: "<USER_REQUEST>\nHi\n</USER_REQUEST>",
+      created_at: "2026-09-15T10:00:00Z",
+    })).toEqual({ role: "user", content: "Hi", timestamp: "2026-09-15T10:00:00Z" });
+    expect(getAdapter("antigravity-cli").parseLine({ type: "PLANNER_RESPONSE", content: "Sure" })).toMatchObject({
+      role: "assistant",
+      content: "Sure",
+    });
+    // Tool results are trace events, so a generic message path must not read them
+    // as model text.
+    expect(getAdapter("antigravity").parseLine({
+      type: "GENERIC",
+      content: "Created At: 2026-09-15T18:00:00+08:00\nresult",
+    })).toBeNull();
+  });
+
+  it("reindexes when only the conversation database changes", async () => {
+    const root = fixture();
+    const paths = antigravityPaths(root, CONVERSATION_ID);
+    writeTranscript(paths.transcript, [
+      { step_index: 0, source: "USER_EXPLICIT", type: "USER_INPUT", status: "DONE", created_at: "2026-09-15T11:00:00Z", content: "<USER_REQUEST>\nIndex me\n</USER_REQUEST>" },
+    ]);
+    writeMetadataDb(paths.metadataDb, { folderUri: pathToFileURL(path.join(root, "workspace")).href });
+    appendStepsTable(paths.metadataDb, [
+      { idx: 1, stepType: 23, status: 3, payload: titlePayload("First title") },
+    ]);
+    const store = new SessionStore(new DatabaseSync(":memory:"));
+    const loadOptions = { homeDir: root, includeAntigravity: true };
+
+    const cold = await syncDefaultSessionsInBatches(store, { batchSize: 1, loadOptions });
+    expect(cold).toMatchObject({ indexed: 1, skipped: 0 });
+    expect(store.getSession(`antigravity:${CONVERSATION_ID}`)?.originalTitle).toBe("First title");
+
+    // The transcript is untouched, so the warm pass skips the session.
+    const warm = await syncDefaultSessionsInBatches(store, { batchSize: 1, loadOptions });
+    expect(warm).toMatchObject({ indexed: 0, skipped: 1 });
+
+    // Change only the database title and move its mtime past the index time, so
+    // the metadata dependency is what decides this pass.
+    setDatabaseTitle(paths.metadataDb, "Second title");
+    const bumped = new Date(Date.now() + 5000);
+    fs.utimesSync(paths.metadataDb, bumped, bumped);
+
+    const refreshed = await syncDefaultSessionsInBatches(store, { batchSize: 1, loadOptions });
+    expect(refreshed).toMatchObject({ indexed: 1, skipped: 0 });
+    expect(store.getSession(`antigravity:${CONVERSATION_ID}`)?.originalTitle).toBe("Second title");
   });
 });

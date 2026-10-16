@@ -113,6 +113,7 @@ DB `steps.step_type` 与转录类型的对应（逐条 join 验证）：`14→US
 - 规划步的用量（字段 5.9）生成逐次 TokenUsageEvent，去重键 `antigravity:<stepIndex>`，时间取该步的 `created_at`；`cachedInputTokens = 5`、`inputTokens = 2`、`outputTokens = 10`、`reasoningOutputTokens = 9`。
 - 标题在注解缺失时取 DB 标题。
 - 以上任一步失败只丢失对应补充信息，转录索引结果不变。
+- DB 用量回填需要一个可展示的时间戳：某一步的转录行没有 `created_at` 时跳过该步的用量事件（无时间的用量无法进入时间线），其余步骤不受影响。
 
 两个来源的差异（都不影响同一套解析规则）：
 
