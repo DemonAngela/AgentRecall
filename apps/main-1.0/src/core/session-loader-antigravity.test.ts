@@ -120,7 +120,14 @@ function titlePayload(title: string): Buffer {
 
 function writeMetadataDb(
   dbPath: string,
-  options: { folderUri?: string; branch?: string; createdAtSeconds?: number },
+  options: {
+    folderUri?: string;
+    branch?: string;
+    createdAtSeconds?: number;
+    /** Conversation that spawned this one (metadata field 5). */
+    ownerConversationId?: string;
+    agentName?: string;
+  },
 ): void {
   fs.mkdirSync(path.dirname(dbPath), { recursive: true });
   const db = new DatabaseSync(dbPath);
@@ -133,6 +140,8 @@ function writeMetadataDb(
   if (options.createdAtSeconds) {
     parts.push(protoLengthDelimited(2, Buffer.concat([protoTag(1, 0), protoVarint(options.createdAtSeconds)])));
   }
+  if (options.ownerConversationId) parts.push(protoString(5, options.ownerConversationId));
+  if (options.agentName) parts.push(protoLengthDelimited(4, protoString(1, options.agentName)));
   db.prepare("INSERT INTO trajectory_metadata_blob (id, data) VALUES ('main', ?)").run(Buffer.concat(parts));
   db.close();
 }
@@ -339,6 +348,75 @@ describe("Antigravity sessions", () => {
       projectPath: paths.transcript,
       originalTitle: "Recover the session",
     });
+  });
+
+  it("links subagent conversations to the conversation that spawned them", () => {
+    const root = fixture();
+    const parentId = "71b45468-1111-2222-3333-444455556666";
+    const childId = "2256caaf-1111-2222-3333-444455556666";
+    const parentPaths = antigravityPaths(root, parentId);
+    const childPaths = antigravityPaths(root, childId);
+    const workspace = path.join(root, "workspace");
+    writeTranscript(parentPaths.transcript, [
+      { step_index: 0, source: "USER_EXPLICIT", type: "USER_INPUT", status: "DONE", created_at: "2026-09-15T09:00:00Z", content: "<USER_REQUEST>\nDelegate the audit\n</USER_REQUEST>" },
+    ]);
+    writeTranscript(childPaths.transcript, [
+      { step_index: 0, source: "USER_EXPLICIT", type: "USER_INPUT", status: "DONE", created_at: "2026-09-15T09:00:05Z", content: "<USER_REQUEST>\nAudit the middleware\n</USER_REQUEST>" },
+    ]);
+    // The parent stores its own id here (an older build wrote it that way) and
+    // must stay a root conversation.
+    writeMetadataDb(parentPaths.metadataDb, { folderUri: pathToFileURL(workspace).href, ownerConversationId: parentId });
+    writeMetadataDb(childPaths.metadataDb, { folderUri: pathToFileURL(workspace).href, ownerConversationId: parentId, agentName: "doc-writer" });
+
+    const loaded = loadDefaultSessions({ homeDir: root, includeAntigravity: true })
+      .filter((item) => item.session.source === "antigravity");
+    const byId = new Map(loaded.map((item) => [item.session.rawId, item.session]));
+    expect(byId.get(parentId)).toMatchObject({ isSubagent: false, parentSessionId: null });
+    expect(byId.get(childId)).toMatchObject({ isSubagent: true, parentSessionId: parentId });
+  });
+
+  it("indexes Antigravity CLI conversations from their own root with transcript usage and failures", () => {
+    const root = fixture();
+    const conversationId = "f554246f-1111-2222-3333-444455556666";
+    const transcript = path.join(
+      root, ".gemini", "antigravity-cli", "brain", conversationId, ".system_generated", "logs", "transcript_full.jsonl",
+    );
+    writeTranscript(transcript, [
+      { step_index: 0, source: "USER_EXPLICIT", type: "USER_INPUT", status: "DONE", created_at: "2026-10-15T08:49:30Z", content: "<USER_REQUEST>\nlist 目录\n</USER_REQUEST>" },
+      {
+        step_index: 1, source: "MODEL", type: "PLANNER_RESPONSE", status: "DONE", created_at: "2026-10-15T08:49:31Z",
+        input_tokens: 11751, output_tokens: 225, cache_read_tokens: 0,
+        tool_calls: [{ name: "run_command", args: { CommandLine: "Get-ChildItem" } }],
+      },
+      {
+        step_index: 2, source: "MODEL", type: "GENERIC", status: "ERROR", created_at: "2026-10-15T08:50:03Z",
+        error: "permission check failed: user denied permission to run command",
+        content: "Created At: 2026-10-15T16:50:03+08:00\nEncountered error in step execution.",
+      },
+    ]);
+
+    // The CLI keeps failed steps in its transcript, so this needs no database.
+    expect(loadDefaultSessions({ homeDir: root, includeAntigravity: true })).toHaveLength(0);
+    const [loaded] = loadDefaultSessions({ homeDir: root, includeAntigravityCli: true });
+    expect(loaded.session).toMatchObject({
+      sessionKey: `antigravity-cli:${conversationId}`,
+      source: "antigravity-cli",
+      isSubagent: false,
+      parentSessionId: null,
+      firstQuestion: "list 目录",
+    });
+    expect(loaded.messages.map((message) => message.content)).toEqual(["list 目录"]);
+    expect((loaded.traceEvents ?? []).filter((event) => event.kind === "tool_result")).toEqual([
+      expect.objectContaining({
+        callId: "antigravity:1:0",
+        status: "failed",
+        detail: "permission check failed: user denied permission to run command",
+      }),
+    ]);
+    expect(loaded.tokenEvents).toEqual([
+      expect.objectContaining({ dedupeKey: "antigravity:1", inputTokens: 11751, outputTokens: 225 }),
+    ]);
+    expect(loaded.session.tokenUsage).toMatchObject({ inputTokens: 11751, outputTokens: 225, totalTokens: 11976 });
   });
 
   it("stays out of the default index until the optional source is enabled", () => {

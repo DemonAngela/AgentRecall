@@ -2029,6 +2029,7 @@ function runIndexSync(retryFailures = false): Promise<IndexStatus> {
       includeQwenCode: settings.includeQwenCode,
       includeGeminiCli: settings.includeGeminiCli,
       includeAntigravity: settings.includeAntigravity,
+      includeAntigravityCli: settings.includeAntigravityCli,
       includeCursorAgent: settings.includeCursorAgent,
       includeTrae: settings.includeTrae,
       includeQoder: settings.includeQoder,

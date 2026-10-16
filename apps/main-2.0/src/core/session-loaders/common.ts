@@ -40,6 +40,7 @@ export interface SessionLoadOptions {
   includeQwenCode?: boolean;
   includeGeminiCli?: boolean;
   includeAntigravity?: boolean;
+  includeAntigravityCli?: boolean;
   includeDeepSeekCli?: boolean;
   cursorStateDbPath?: string;
   cursorWorkspacePathMap?: ReadonlyMap<string, string>;
@@ -329,7 +330,8 @@ export function createIndexedSession(input: {
     | "qwen"
     | "gemini"
     | "deepseek"
-    | "antigravity";
+    | "antigravity"
+    | "antigravity-cli";
   rawId: string;
   source: SessionSource;
   projectPath: string;

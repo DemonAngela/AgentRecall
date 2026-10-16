@@ -21,8 +21,9 @@ export type SessionSource =
   | "kimi-cli"
   | "qwen-code"
   | "gemini-cli"
-  | "antigravity";
-export type SessionFormat = "claude" | "codex" | "codebuddy" | "workbuddy" | "codewiz" | "openclaw" | "hermes" | "opencode" | "zcode" | "cursor" | "trae" | "qoder" | "pi" | "deepseek" | "kimi" | "qwen" | "gemini" | "antigravity";
+  | "antigravity"
+  | "antigravity-cli";
+export type SessionFormat = "claude" | "codex" | "codebuddy" | "workbuddy" | "codewiz" | "openclaw" | "hermes" | "opencode" | "zcode" | "cursor" | "trae" | "qoder" | "pi" | "deepseek" | "kimi" | "qwen" | "gemini" | "antigravity" | "antigravity-cli";
 export type SessionSortBy = "smart" | "activity" | "created";
 export type EnvironmentKind = "local" | "wsl" | "ssh";
 export type EnvironmentSyncState = "idle" | "syncing" | "watching" | "polling" | "disconnected" | "error";

@@ -416,9 +416,8 @@ export const geminiAdapter: FormatAdapter = {
 
 // Antigravity transcript rows: user input is XML-wrapped and tool results arrive
 // as GENERIC model steps.
-export const antigravityAdapter: FormatAdapter = {
-  format: "antigravity",
-  parseLine(raw) {
+// Desktop Antigravity and the `agy` CLI share the transcript row shape.
+function antigravityParsedLine(raw: unknown): ParsedLine {
     if (!raw || typeof raw !== "object") return null;
     const row = raw as Record<string, unknown>;
     const type = typeof row.type === "string" ? row.type : "";
@@ -433,7 +432,16 @@ export const antigravityAdapter: FormatAdapter = {
       return { role: "assistant", content, timestamp };
     }
     return null;
-  },
+}
+
+export const antigravityAdapter: FormatAdapter = {
+  format: "antigravity",
+  parseLine: antigravityParsedLine,
+};
+
+export const antigravityCliAdapter: FormatAdapter = {
+  format: "antigravity-cli",
+  parseLine: antigravityParsedLine,
 };
 
 export function getFormatForSource(source: SessionSource): SessionFormat {
@@ -460,6 +468,7 @@ export function getAdapter(sourceOrFormat: SessionSource | SessionFormat): Forma
   if (sourceOrFormat === "qwen") return qwenAdapter;
   if (sourceOrFormat === "gemini") return geminiAdapter;
   if (sourceOrFormat === "antigravity") return antigravityAdapter;
+  if (sourceOrFormat === "antigravity-cli") return antigravityCliAdapter;
   const format = getFormatForSource(sourceOrFormat);
   if (format === "claude") return claudeAdapter;
   if (format === "codebuddy") return codebuddyAdapter;
@@ -478,6 +487,7 @@ export function getAdapter(sourceOrFormat: SessionSource | SessionFormat): Forma
   if (format === "qwen") return qwenAdapter;
   if (format === "gemini") return geminiAdapter;
   if (format === "antigravity") return antigravityAdapter;
+  if (format === "antigravity-cli") return antigravityCliAdapter;
   return codexAdapter;
 }
 

@@ -36,6 +36,20 @@ describe("StepCode session source semantics", () => {
     });
   });
 
+  it("keeps Antigravity CLI opt-in and read-only", () => {
+    expect(sessionSourceDescriptor("antigravity-cli")).toMatchObject({
+      label: "Antigravity CLI",
+      format: "antigravity-cli",
+      family: "antigravity-cli",
+      uiFamily: "other",
+      optionalSetting: "includeAntigravityCli",
+      pendingKey: "antigravity-cli",
+      liveFamily: null,
+      remoteFamily: null,
+      capabilities: { live: false, resume: false, migrate: false, sessionSync: false, openApp: false },
+    });
+  });
+
   it("keeps legacy Qoder IDE sessions as a separate opt-in read-only source", () => {
     expect(sessionSourceDescriptor("qoder-ide")).toMatchObject({
       label: "Qoder IDE",

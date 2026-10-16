@@ -109,6 +109,7 @@ export interface AppSettings {
   includeGeminiCli: boolean;
   includeDeepSeekCli: boolean;
   includeAntigravity: boolean;
+  includeAntigravityCli: boolean;
   evalEnabled: boolean;
   openVikingMemoryEnabled: boolean;
   openVikingClaudeEnabled: boolean;
@@ -216,6 +217,7 @@ export const defaultSettings: AppSettings = {
   includeGeminiCli: false,
   includeDeepSeekCli: false,
   includeAntigravity: false,
+  includeAntigravityCli: false,
   evalEnabled: false,
   openVikingMemoryEnabled: false,
   openVikingClaudeEnabled: false,

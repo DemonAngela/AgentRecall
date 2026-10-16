@@ -1030,6 +1030,8 @@ export function* loadGeminiCliSessionsIterator(root: string, options: SessionLoa
 }
 
 export const ANTIGRAVITY_DIR = "antigravity";
+// The `agy` CLI stores the same layout under its own sibling directory.
+export const ANTIGRAVITY_CLI_DIR = "antigravity-cli";
 
 // Antigravity appends transcript entries when a step finishes writing, so a tool
 // result can precede the planner response that requested it in file order.
@@ -1137,6 +1139,9 @@ interface AntigravityConversationDb {
   gitBranch: string | null;
   createdAtMs: number;
   title: string;
+  /** Raw field 5: the conversation that spawned this one, when present. */
+  ownerConversationId: string;
+  agentName: string;
   /** Planner step index -> token usage of that model call (payload field 5.9). */
   usageByStep: Map<number, AntigravityTokenUsage>;
   /** Planner step index -> real tool call ids in call order (payload field 20.7.1). */
@@ -1179,6 +1184,8 @@ function readAntigravityMetadataFromDb(db: import("node:sqlite").DatabaseSync): 
   projectPath: string;
   gitBranch: string | null;
   createdAtMs: number;
+  ownerConversationId: string;
+  agentName: string;
 } | null {
   const row = db.prepare("SELECT data FROM trajectory_metadata_blob WHERE id = 'main'").get() as
     | { data?: Uint8Array }
@@ -1193,8 +1200,20 @@ function readAntigravityMetadataFromDb(db: import("node:sqlite").DatabaseSync): 
     : "";
   const gitBranch = workspace ? antigravityFieldText(antigravityProtoFields(workspace), 4) || null : null;
   const seconds = createdAt ? antigravityFieldVarint(antigravityProtoFields(createdAt), 1) : 0;
-  if (!projectPath && !gitBranch && seconds <= 0) return null;
-  return { projectPath, gitBranch, createdAtMs: seconds > 0 ? seconds * 1000 : 0 };
+  // Field 5 names the conversation that spawned this one. It is absent for
+  // user-started conversations; a subagent run carries the parent in both
+  // field 5 and field 6, so callers compare it with the conversation id.
+  const ownerConversationId = antigravityFieldText(outer, 5);
+  const agent = antigravityFieldBytes(outer, 4);
+  const agentName = agent ? antigravityFieldText(antigravityProtoFields(agent), 1) : "";
+  if (!projectPath && !gitBranch && seconds <= 0 && !ownerConversationId && !agentName) return null;
+  return {
+    projectPath,
+    gitBranch,
+    createdAtMs: seconds > 0 ? seconds * 1000 : 0,
+    ownerConversationId,
+    agentName,
+  };
 }
 
 // The steps table carries what the display transcript drops: failed tool results,
@@ -1301,6 +1320,8 @@ function readAntigravityConversationDb(dbPath: string): AntigravityConversationD
       projectPath: metadata?.projectPath ?? "",
       gitBranch: metadata?.gitBranch ?? null,
       createdAtMs: metadata?.createdAtMs ?? 0,
+      ownerConversationId: metadata?.ownerConversationId ?? "",
+      agentName: metadata?.agentName ?? "",
       ...steps,
     };
   } catch {
@@ -1365,7 +1386,9 @@ function loadAntigravitySessionFile(
   conversationId: string,
   root: string,
   stat: VirtualSessionFileStat,
+  source: SessionSource = "antigravity",
 ): LoadedSession | null {
+  const traceSource: SessionFormat = source === "antigravity-cli" ? "antigravity-cli" : "antigravity";
   const rows = readJsonl(filePath).filter(isRecord);
   if (!rows.length) return null;
   const entries = rows
@@ -1384,6 +1407,7 @@ function loadAntigravitySessionFile(
   const pendingCalls: Array<{ callId: string; title: string }> = [];
   const createdAtByStep = new Map<number, string>();
   const transcriptCallsByRealId = new Map<string, { callId: string; title: string; timestamp: string }>();
+  const pairedRealIds = new Set<string>();
   let firstMs = 0;
   let lastMs = 0;
   for (const { row } of entries) {
@@ -1393,15 +1417,27 @@ function loadAntigravitySessionFile(
       firstMs ||= createdMs;
       lastMs = createdMs;
     }
-    if (timestamp) createdAtByStep.set(numberField(row, "step_index"), timestamp);
+    const stepIndex = numberField(row, "step_index");
+    if (timestamp) createdAtByStep.set(stepIndex, timestamp);
     const type = stringField(row, "type");
     const content = stringField(row, "content");
     const thinking = stringField(row, "thinking");
-    const stepIndex = numberField(row, "step_index");
+    // The CLI transcript reports its own usage; the desktop transcript omits it
+    // and the database supplies it instead. Prefer whichever has the step.
+    if (numberField(row, "input_tokens") || numberField(row, "output_tokens") || numberField(row, "cache_read_tokens")) {
+      putTokenEvent(tokenEntries, tokenEvent(
+        timestampMs(timestamp),
+        `antigravity:${stepIndex}`,
+        numberField(row, "input_tokens"),
+        numberField(row, "output_tokens"),
+        numberField(row, "cache_read_tokens"),
+        0,
+      ));
+    }
     if (thinking.trim()) {
       traceDrafts.push({
         kind: "event",
-        source: "antigravity",
+        source: traceSource,
         title: "Thinking",
         detail: stringifyDetail(thinking),
         timestamp,
@@ -1426,7 +1462,7 @@ function loadAntigravitySessionFile(
         );
         traceDrafts.push({
           kind: "tool_call",
-          source: "antigravity",
+          source: traceSource,
           title,
           detail: stringifyDetail(args),
           timestamp,
@@ -1454,17 +1490,21 @@ function loadAntigravitySessionFile(
       const exactCallId = realResultId ? transcriptCallsByRealId.get(realResultId)?.callId ?? null : null;
       const exactIndex = exactCallId ? pendingCalls.findIndex((entry) => entry.callId === exactCallId) : -1;
       const pending = exactIndex >= 0 ? pendingCalls.splice(exactIndex, 1)[0] : pendingCalls.shift() ?? null;
+      if (realResultId) pairedRealIds.add(realResultId);
       const body = antigravityToolResultBody(content);
+      const errorText = stringField(row, "error");
       if (pending) {
+        // The CLI transcript keeps a failed step and its message in the entry
+        // itself, so the outcome comes from the transcript rather than the DB.
         traceDrafts.push({
           kind: "tool_result",
-          source: "antigravity",
+          source: traceSource,
           title: pending.title,
-          detail: stringifyDetail(body),
+          detail: stringifyDetail(errorText || body),
           timestamp,
           callId: pending.callId,
           eventType: "antigravity.toolResult",
-          status: "completed",
+          status: errorText || stringField(row, "status") === "ERROR" ? "failed" : "completed",
         });
         continue;
       }
@@ -1479,7 +1519,7 @@ function loadAntigravitySessionFile(
     if (type === "CHECKPOINT") {
       traceDrafts.push({
         kind: "event",
-        source: "antigravity",
+        source: traceSource,
         title: "Context checkpoint",
         detail: stringifyDetail(content),
         timestamp,
@@ -1492,7 +1532,7 @@ function loadAntigravitySessionFile(
     if (type === "ERROR_MESSAGE") {
       traceDrafts.push({
         kind: "event",
-        source: "antigravity",
+        source: traceSource,
         title: "Error",
         detail: stringifyDetail(content),
         timestamp,
@@ -1505,7 +1545,7 @@ function loadAntigravitySessionFile(
     if (type === "SYSTEM_MESSAGE") {
       traceDrafts.push({
         kind: "event",
-        source: "antigravity",
+        source: traceSource,
         title: "Agent message",
         detail: stringifyDetail(antigravitySystemMessageBody(content)),
         timestamp,
@@ -1520,11 +1560,12 @@ function loadAntigravitySessionFile(
   // Failed and aborted tool steps never reach the transcript; the database holds
   // their result and the error the user saw.
   for (const failed of conversationDb?.failedCalls ?? []) {
+    if (pairedRealIds.has(failed.callId)) continue;
     const call = transcriptCallsByRealId.get(failed.callId);
     if (!call) continue;
     traceDrafts.push({
       kind: "tool_result",
-      source: "antigravity",
+      source: traceSource,
       title: call.title,
       detail: stringifyDetail(failed.detail),
       timestamp: failed.timestampMs > 0 ? timestampString(failed.timestampMs) : call.timestamp,
@@ -1534,6 +1575,8 @@ function loadAntigravitySessionFile(
     });
   }
   for (const [stepIndex, usage] of conversationDb?.usageByStep ?? []) {
+    // A transcript that already reported this step's usage is authoritative.
+    if (tokenEntries.has(`antigravity:${stepIndex}`)) continue;
     const timestamp = createdAtByStep.get(stepIndex);
     if (!timestamp) continue;
     putTokenEvent(tokenEntries, tokenEvent(
@@ -1548,14 +1591,18 @@ function loadAntigravitySessionFile(
 
   if (!messages.length) return null;
   const question = firstQuestion(messages);
+  // A subagent run stores its spawning conversation as owner; a self-reference
+  // (an older build wrote the conversation id here) is not a parent.
+  const ownerId = conversationDb?.ownerConversationId ?? "";
+  const parentConversationId = ownerId && ownerId !== conversationId ? ownerId : null;
   const annotationTitle = readAntigravityAnnotationTitle(
     path.join(root, "annotations", `${conversationId}.pbtxt`),
   );
   return {
     session: createIndexedSession({
-      keyPrefix: "antigravity",
+      keyPrefix: source === "antigravity-cli" ? "antigravity-cli" : "antigravity",
       rawId: conversationId,
-      source: "antigravity",
+      source,
       projectPath: conversationDb?.projectPath || filePath,
       filePath,
       originalTitle: annotationTitle || conversationDb?.title || cleanTitle(question) || conversationId,
@@ -1564,6 +1611,8 @@ function loadAntigravitySessionFile(
       timestamp: conversationDb?.createdAtMs || firstMs || lastMs || stat.mtimeMs,
       tokenUsage: tokenUsageFromEvents([...tokenEntries.values()]),
       stat,
+      isSubagent: parentConversationId != null,
+      parentSessionId: parentConversationId,
     }),
     messages,
     tokenEvents: [...tokenEntries.values()],
@@ -1571,7 +1620,10 @@ function loadAntigravitySessionFile(
   };
 }
 
+// Desktop Antigravity and the `agy` CLI share the same brain layout, transcript
+// format, and step database; only the root directory and source id differ.
 export function* loadAntigravitySessionsIterator(root: string, options: SessionLoadOptions): Generator<LoadedSession> {
+  const source: SessionSource = path.basename(root) === ANTIGRAVITY_CLI_DIR ? "antigravity-cli" : "antigravity";
   const brainRoot = path.join(root, "brain");
   let conversationDirs: fs.Dirent[];
   try {
@@ -1591,8 +1643,8 @@ export function* loadAntigravitySessionsIterator(root: string, options: SessionL
       safeStat(path.join(root, "conversations", `${entry.name}.db`)).mtimeMs,
       safeStat(path.join(root, "annotations", `${entry.name}.pbtxt`)).mtimeMs,
     );
-    if (shouldSkipFile(options, transcriptPath, stat, dependencyMtimeMs, "antigravity")) continue;
-    const loaded = loadAntigravitySessionFile(transcriptPath, entry.name, root, stat);
+    if (shouldSkipFile(options, transcriptPath, stat, dependencyMtimeMs, source)) continue;
+    const loaded = loadAntigravitySessionFile(transcriptPath, entry.name, root, stat, source);
     if (loaded) yield loaded;
   }
 }

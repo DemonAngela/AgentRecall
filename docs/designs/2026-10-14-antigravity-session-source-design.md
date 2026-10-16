@@ -2,12 +2,12 @@
 
 ## 文档状态
 
-- 状态：只读来源 `antigravity` 已在 V1 与 V2 实现，含用会话 DB 补齐失败工具结果、token 用量与标题（默认关闭，需要用户在设置中开启）
+- 状态：只读来源 `antigravity`（桌面版）与 `antigravity-cli`（`agy` CLI）已在 V1 与 V2 实现，含会话 DB 补齐、token 用量、子会话父子关系与标题（默认关闭，需要用户在设置中开启）
 - 适用范围：`apps/main-1.0` 与 `apps/main-2.0` 的会话索引
 - 主要读者：负责实现、审查和验证会话来源的维护者
 - 内容类型：设计说明与格式参考
 
-本文定义 Google Antigravity（Electron 桌面 IDE）本地会话的发现、解析与索引契约。格式事实来自对 Antigravity 2.13.0（Windows）真实会话数据的分析，并与此前已核实的社区逆向结论互相印证（见文末参考）。Antigravity 是闭源产品，Google 未公开该格式，也没有官方开源仓库描述它；本文是当前 checkout 的唯一权威说明。
+本文定义 Google Antigravity 本地会话的发现、解析与索引契约，覆盖桌面版（2.13.0）与官方 `agy` CLI（1.3.5）。格式事实来自对这两个真实安装数据的分析，并与此前已核实的社区逆向结论互相印证（见文末参考）。Antigravity 是闭源产品，Google 未公开该格式；官方 [antigravity-cli](https://github.com/google-antigravity/antigravity-cli) 仓库只发布二进制与文档、不含源码，因此本文是当前 checkout 的唯一权威说明。
 
 ## 要解决的问题
 
@@ -18,20 +18,22 @@ Antigravity 是常见的同类编码代理之一，但 AgentRecall 此前无法�
 - 只读索引本机 Antigravity 会话：消息、思维链、工具调用与结果、上下文压缩标记、代理间消息。
 - 恢复会话所属工作区路径、默认分支与会话标题，用于分组与展示。
 - 用会话 DB 补齐转录缺失的信息：失败/中止的工具结果、逐次调用的 token 用量。
+- 恢复子代理会话与派生它的会话之间的父子关系。
 - 与现有可选来源一致：默认关闭、开启后增量索引、关闭后清理索引；源文件永不被修改或删除。
 - 对格式漂移保持容错：未知条目类型被忽略并保留已解析内容，不使整批失败。
 
 ## 非目标
 
-- 不支持 Antigravity CLI（`agy`，`~/.gemini/antigravity-cli/`）：它的会话内容只存在于 SQLite `steps.step_payload` protobuf 中，需要完整逆向 schema；本设计只读取该 CLI 目录之外的桌面版数据（见"分期"）。
+- 不提供 Antigravity CLI 的实时流、`/resume` 或会话导出；两个来源都只做离线只读索引。
 - 不提供 live 跟踪、恢复、迁移、团队会话同步或"在应用中打开"能力（capabilities 全为 false）。
 - 不展示模型名：会话 DB 中只有配置 id 和混杂在提示文本里的模型串，无法可靠归属到单次会话，AgentRecall 也没有模型展示位。
 - 不索引 `conversations/*.db` 中未出现在 `brain/` 的会话（例如仅剩归档注解的已删除会话）。
-- 不实现 `~/.gemini/antigravity-ide/` 等未经本机验证的候选路径。
+- 不实现 `~/.gemini/antigravity-ide/`、`-backup`、`-acp`、`.config/antigravity` 等未经本机验证的候选路径（社区适配器列出了它们，见参考）。
 
 ## 数据结构（实测）
 
 ```
+~/.gemini/antigravity-cli/                  # `agy` CLI 根目录：brain/、conversations/ 与桌面版同构
 ~/.gemini/antigravity/                      # 桌面版根目录（Windows/macOS/Linux 同构）
 ├── brain/<会话id>/.system_generated/logs/
 │   ├── transcript_full.jsonl               # 主数据源：逐行 JSON，长字段不截断
@@ -82,9 +84,10 @@ DB `steps.step_type` 与转录类型的对应（逐条 join 验证）：`14→US
 
 ### 发现与身份
 
-- 根目录：`<homeDir>/.gemini/antigravity`；`homeDir` 来自加载选项，测试用临时目录注入。
+- 根目录：`<homeDir>/.gemini/antigravity`（源 `antigravity`）与 `<homeDir>/.gemini/antigravity-cli`（源 `antigravity-cli`）；两者共用下面的布局与解析规则，`homeDir` 来自加载选项，测试用临时目录注入。
 - 会话枚举 `brain/*/`，其 `.system_generated/logs/` 下存在可用转录（优先 `transcript_full.jsonl`，回退 `transcript.jsonl`）才成为会话。`chunks/` 分片与转录内容重复且边界语义未验证，不参与读取。
-- 身份：`source = "antigravity"`，`rawId = 会话目录名`（UUID），`sessionKey = "antigravity:<uuid>"`，`filePath = 转录文件`，`isSubagent = false`。
+- 身份：`rawId = 会话目录名`（UUID），`sessionKey = "<source>:<uuid>"`，`filePath = 转录文件`。
+- 父子关系：元数据字段 5 记录派生它的会话。字段 5 等于本会话 id 的自引用按根会话处理（旧版本这样写）；子代理会话的字段 5、6 都是父会话 id，因此只与自身 id 比较。子会话标记 `isSubagent` 并保留 `parentSessionId`。
 - 新鲜度：以转录文件 mtime/size 判定；`conversations/<id>.db` 与 `annotations/<id>.pbtxt` 的 mtime 作为 dependency 参与变更判定（元数据变化需要重新索引）。
 - 工作区：`projectPath` 取元数据 folderUri 的本地路径；缺失时回退 `filePath`。`gitBranch` 取元数据字段 1.4。
 - 标题：注解 `title:` 优先，其次会话 DB 的标题更新（最后一条 `t23` 的字段 30.4），再次首条用户请求，最后会话 id。
@@ -95,8 +98,8 @@ DB `steps.step_type` 与转录类型的对应（逐条 join 验证）：`14→US
 | 转录条目 | 映射 |
 |---|---|
 | `USER_INPUT` | 用户消息；提取 `<USER_REQUEST>…</USER_REQUEST>`，剥离 `<ADDITIONAL_METADATA>`/`<USER_SETTINGS_CHANGE>` 等系统块 |
-| `PLANNER_RESPONSE` | `thinking` → 推理事件；`content` → 助手消息；`tool_calls` → 工具调用事件（`antigravity.toolCall`，`callId = antigravity:<stepIndex>:<i>`） |
-| `GENERIC` | 工具结果事件（`antigravity.toolResult`），优先按会话 DB 记录的真实调用 id 配对，无 DB 信息时按 step_index 顺序配对；剥离 `Created At:`/`Completed At:` 头行，无待配对调用时按助手文本处理 |
+| `PLANNER_RESPONSE` | `thinking` → 推理事件；`content` → 助手消息；`tool_calls` → 工具调用事件（`antigravity.toolCall`，`callId = antigravity:<stepIndex>:<i>`）；`input_tokens`/`output_tokens`/`cache_read_tokens`（CLI 转录自带）→ 逐次 TokenUsageEvent |
+| `GENERIC` | 工具结果事件（`antigravity.toolResult`），优先按会话 DB 记录的真实调用 id 配对，无 DB 信息时按 step_index 顺序配对；剥离 `Created At:`/`Completed At:` 头行，无待配对调用时按助手文本处理。CLI 转录会保留失败步（`status: "ERROR"` 与 `error` 字段），此时结果状态取 `failed`、detail 取 `error` |
 | `CHECKPOINT` | 上下文压缩事件（`antigravity.context.compaction`），detail 为截断摘要 |
 | `ERROR_MESSAGE` | 失败事件（`antigravity.error`，`status = failed`） |
 | `SYSTEM_MESSAGE` | 代理间/后台任务消息事件（`antigravity.collaboration.message`） |
@@ -110,6 +113,12 @@ DB `steps.step_type` 与转录类型的对应（逐条 join 验证）：`14→US
 - 规划步的用量（字段 5.9）生成逐次 TokenUsageEvent，去重键 `antigravity:<stepIndex>`，时间取该步的 `created_at`；`cachedInputTokens = 5`、`inputTokens = 2`、`outputTokens = 10`、`reasoningOutputTokens = 9`。
 - 标题在注解缺失时取 DB 标题。
 - 以上任一步失败只丢失对应补充信息，转录索引结果不变。
+
+两个来源的差异（都不影响同一套解析规则）：
+
+- CLI 转录自带逐次用量，桌面版转录没有；加载器优先采用转录里的用量，只有转录未报告该步时才用 DB 的字段 5.9。
+- CLI 转录保留失败与后台运行的步骤（`status: "ERROR"`、`"RUNNING"`，后者只在转录里出现 `Created At` 与任务说明），桌面版转录会丢弃失败步。DB 补出的失败结果只在转录没有报告同一步时追加。
+- CLI 没有 `annotations/` 目录，标题来自 DB 字段 30.4 或首个提问。
 
 ### 失败与边界
 
@@ -130,20 +139,20 @@ DB `steps.step_type` 与转录类型的对应（逐条 join 验证）：`14→US
 
 - 已完成（Phase 1）：桌面版转录索引，只读。
 - 已完成（Phase 2）：用会话 DB 补齐失败与中止的工具结果、逐次 token 用量和 DB 标题。
-- 未实现（Phase 3）：CLI（`agy`，`~/.gemini/antigravity-cli/conversations/`）。已核对社区恢复出的 CLI schema：CLI 与桌面版共用 `steps` 表结构，但 `step_payload` 的字段布局不同（参考项目把工具调用放在字段 5.1，本机桌面版在 5.4 且字段 5 是独立的 Cortex 元数据块），且本机没有 CLI 安装可用于验证。等拿到真实 CLI 会话数据后再实现，避免交付无法验证的解析器。
-- 未决：`chunks/` 与转录的边界差异（少 1 行）语义；版本升级后的格式漂移。
+- 已完成（Phase 3）：`antigravity-cli` 来源，以及对两个来源都生效的子会话父子关系。CLI 与桌面版共用 `brain/` 布局、转录格式和 `steps` 表 schema（字段 1 自检 63/63、转录用量与 DB 字段 5.9 逐条相等），因此复用同一套解析器，只按根目录区分来源与 key 前缀。
+- 未决：`chunks/` 与转录的边界差异（少 1 行）语义；版本升级后的格式漂移；社区适配器列出的其它候选根目录（`-ide`、`-backup`、`-acp`、`.config/antigravity`）。
 
 ## 验证
 
 - 单元测试：`apps/*/src/core/session-loader-antigravity.test.ts`，合成 fixture 覆盖顺序重排、用户请求提取、工具配对与未闭合调用、失败/中止结果的 DB 补全、token 用量、压缩标记、错误条目、代理间消息、未知条目忽略、注解与 DB 标题、protobuf 元数据、缺失回退与开关默认关闭。
 - 注册表不变量：`session-sources.test.ts`（V1 有序来源数组、可选来源开关数组）。
-- 字段验证：用转录作为标准答案对真实 DB 做逐条比对——step_type 自检 113/113 一致、208 个用量字段满足 `3 = 9 + 10`、9 个失败步骤的调用 id 全部能在规划步中找到且有错误文本、5/6 会话能取到 DB 标题。
-- 手工核对：对 Antigravity 2.13.0 的真实安装运行加载器，6 个会话的标题、工作区路径、分支、消息数、工具调用与结果数、逐次用量、压缩标记与代理间消息均与源数据一致。
+- 字段验证：用转录作为标准答案对真实 DB 做逐条比对——桌面版 step_type 自检 113/113、CLI 63/63 一致；桌面版 208 个用量字段满足 `3 = 9 + 10`，CLI 的 28 个用量步转录值与 DB 字段 5.9 逐条相等；9 个失败步骤的调用 id 全部能在规划步中找到且有错误文本；5/6 桌面会话能取到 DB 标题；父子关联由字段 5 与自身 id 比对得出，桌面版 3/3 子代理正确归属。
+- 手工核对：对 Antigravity 2.13.0 与 CLI 1.3.5 的真实安装运行加载器。桌面版 6 个会话（含 3 个子代理指向同一父会话）、CLI 1 个会话的标题、工作区、消息数、工具调用与结果数、逐次用量、失败结果状态、压缩标记与代理间消息均与源数据一致；两个来源的全部工具调用都与结果闭合（unpaired = 0）。
 - 回归对照：两版本全量测试的失败项与本分支基线逐一相同（Windows 路径与进程探测类既有失败），未新增失败。
 
 ## 参考
 
 - [rajbos/ai-engineering-fluency · antigravity-session-format.md](https://github.com/rajbos/ai-engineering-fluency/blob/main/docs/logFilesSchema/antigravity-session-format.md)：转录字段与 `<USER_REQUEST>` 结构的公开格式说明；其中记录的 `conversations/*.pb` 已被本机的 `*.db` 取代。
-- [shubzkothekar/antigravity-acp](https://github.com/shubzkothekar/antigravity-acp)：CLI 会话 DB 读取与恢复出的 protobuf 定义，供 Phase 2 参考。
+- [shubzkothekar/antigravity-acp](https://github.com/shubzkothekar/antigravity-acp)：CLI 会话 DB 读取与恢复出的 protobuf 定义。其 `ToolRun`（字段 5.1 取工具调用）针对的是 agy 1.2.12，与本机 1.3.5 的字段 5 布局不同；它的 schema 也没有用量字段，对应其仍未实现的用例[issue #20](https://github.com/shubzkothekar/antigravity-acp/issues/20)（本机已验证的字段 5.9 用量分桶可直接用于该用例）。
 - [ccusage/ccusage · rust/adapters/antigravity](https://github.com/ccusage/ccusage/tree/main/rust/adapters/antigravity)：独立实现的用量适配器，其 token 分桶（input / total_output / cache_read / reasoning / visible_output）与本机验证的字段 2/3/5/9/10 完全对应；同时列出六个候选数据根目录（`.gemini/antigravity`、`-cli`、`-ide`、`-backup`、`-acp`、`.config/antigravity`）与 `ANTIGRAVITY_DATA_DIR` 覆盖，可作为后续多根目录支持的输入。
 - [router-for-me/CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI)、[Pika-Yalei/antigravity-decryptor](https://github.com/Pika-Yalei/antigravity-decryptor)：经语言服务器访问 Antigravity，依赖运行时进程，不适用于离线只读索引。

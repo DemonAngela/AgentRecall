@@ -19,6 +19,7 @@ export type SessionIndexWorkerLoadOptions = Pick<
   | "includeQwenCode"
   | "includeGeminiCli"
   | "includeAntigravity"
+  | "includeAntigravityCli"
   | "includeCursorAgent"
   | "includeTrae"
   | "includeQoder"

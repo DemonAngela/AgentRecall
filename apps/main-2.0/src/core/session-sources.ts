@@ -20,7 +20,8 @@ export type OptionalSessionSourceSetting =
   | "includeQwenCode"
   | "includeGeminiCli"
   | "includeDeepSeekCli"
-  | "includeAntigravity";
+  | "includeAntigravity"
+  | "includeAntigravityCli";
 
 export type SessionSourceFamily =
   | "claude"
@@ -44,7 +45,8 @@ export type SessionSourceFamily =
   | "qwen"
   | "gemini"
   | "deepseek"
-  | "antigravity";
+  | "antigravity"
+  | "antigravity-cli";
 
 export type SessionSourceUiFamily = "claude" | "codex" | "codebuddy" | "codewiz" | "zcode" | "other";
 
@@ -225,6 +227,12 @@ export const SESSION_SOURCE_REGISTRY = {
   antigravity: {
     id: "antigravity", label: "Antigravity", format: "antigravity", family: "antigravity", uiFamily: "other", statsGroup: null,
     optionalSetting: "includeAntigravity", pendingKey: "antigravity", remoteCollectorOptional: false, liveFamily: null, migrationAgent: null,
+    resumeTarget: null, remoteFamily: null, nativeAppFamily: null,
+    capabilities: { live: false, resume: false, migrate: false, sessionSync: false, openApp: false },
+  },
+  "antigravity-cli": {
+    id: "antigravity-cli", label: "Antigravity CLI", format: "antigravity-cli", family: "antigravity-cli", uiFamily: "other", statsGroup: null,
+    optionalSetting: "includeAntigravityCli", pendingKey: "antigravity-cli", remoteCollectorOptional: false, liveFamily: null, migrationAgent: null,
     resumeTarget: null, remoteFamily: null, nativeAppFamily: null,
     capabilities: { live: false, resume: false, migrate: false, sessionSync: false, openApp: false },
   },

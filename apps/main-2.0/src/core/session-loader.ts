@@ -25,6 +25,7 @@ import {
   KIMI_LEGACY_DIR,
   PI_SESSIONS_DIR,
   QODER_DIR,
+  ANTIGRAVITY_CLI_DIR,
   ANTIGRAVITY_DIR,
   GEMINI_DIR,
   QWEN_DIR,
@@ -2039,6 +2040,9 @@ export function* loadDefaultSessionsIterator(options: SessionLoadOptions = {}): 
   if (options.includeAntigravity) {
     yield* loadAntigravitySessionsIterator(path.join(homeDir, GEMINI_DIR, ANTIGRAVITY_DIR), options);
   }
+  if (options.includeAntigravityCli) {
+    yield* loadAntigravitySessionsIterator(path.join(homeDir, GEMINI_DIR, ANTIGRAVITY_CLI_DIR), options);
+  }
   if (options.includeTclaude) yield* loadClaudeCliSessionsIterator(path.join(homeDir, TCLAUDE_DIR), "tclaude-cli", options);
   if (options.includeTcodex) yield* loadCodexSessionsIterator(path.join(homeDir, TCODEX_DIR), "tcodex-cli", options);
   if (options.includeCodeBuddyCli) yield* loadCodeBuddyCliSessionsIterator(path.join(homeDir, CODEBUDDY_DIR), options);
@@ -2098,6 +2102,9 @@ export async function* loadDefaultSessionsAsyncIterator(options: SessionLoadOpti
   }
   if (options.includeAntigravity) {
     yield* loadAntigravitySessionsIterator(path.join(homeDir, GEMINI_DIR, ANTIGRAVITY_DIR), options);
+  }
+  if (options.includeAntigravityCli) {
+    yield* loadAntigravitySessionsIterator(path.join(homeDir, GEMINI_DIR, ANTIGRAVITY_CLI_DIR), options);
   }
   if (options.includeTclaude) yield* loadClaudeCliSessionsIterator(path.join(homeDir, TCLAUDE_DIR), "tclaude-cli", options);
   if (options.includeTcodex) yield* loadCodexSessionsAsyncIterator(path.join(homeDir, TCODEX_DIR), "tcodex-cli", options);
