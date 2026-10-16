@@ -237,6 +237,24 @@ test("local workspace survives reopen, compares against the pulled baseline and 
   assert.equal((await reopened.previewDocument(f.root, "guide")).content, "Local guide");
 });
 
+test("local Env saves reject case-only duplicates without leaving unpublishable drafts", async t => {
+  const f = await setup(t);
+  await f.assets.stage(f.root, [env]);
+  const collision = { ...env, value: { ...env.value, name: env.value.name.toLowerCase(), value: "replacement" } };
+  const extra = { ...env, value: { ...env.value, name: "EXTRA_MODE" } };
+  await assert.rejects(f.assets.stage(f.root, [extra, collision]), { code: "CONFIGURATION_EXISTS" });
+  const changes = await f.assets.localChanges(f.root);
+  assert.deepEqual(changes.map(change => change.key), ["environment:TEAM_MODE"]);
+  assert.deepEqual((await f.assets.list(f.root)).configuration.environment, [env.value]);
+
+  const change = changes[0]!.change;
+  await f.assets.publishConfiguration(f.root, await f.assets.previewConfiguration(f.root, (await f.assets.list(f.root)).commit, change), change);
+  assert.deepEqual(await f.assets.localChanges(f.root), []);
+  await assert.rejects(f.assets.stage(f.root, [collision]), { code: "CONFIGURATION_EXISTS" });
+  assert.deepEqual(await f.assets.localChanges(f.root), []);
+  assert.deepEqual((await f.assets.list(f.root)).configuration.environment, [env.value]);
+});
+
 test("resource folders survive local reopen, Git publication and Pull without changing resources", async t => {
   const f = await setup(t);
   await f.assets.publishConfiguration(f.root, await f.assets.previewConfiguration(f.root, (await f.assets.list(f.root)).commit, env), env);
