@@ -3263,10 +3263,15 @@ function* loadAntigravitySessionsIterator(root: string, options: SessionLoadOpti
     const transcriptPath = antigravityTranscriptPath(logsDir);
     if (!transcriptPath) continue;
     const stat = safeStat(transcriptPath);
+    const conversationDb = path.join(root, "conversations", `${entry.name}.db`);
     // Workspace, title, and parent linkage live in sibling metadata files, so
-    // their mtimes join the change check; a new file still passes it.
+    // their mtimes join the change check; a new file still passes it. The
+    // database stays in WAL mode while Antigravity is open, and a commit then
+    // lands in the sidecar and leaves the database mtime untouched, so that file
+    // joins the check as well.
     const dependencyMtimeMs = Math.max(
-      safeStat(path.join(root, "conversations", `${entry.name}.db`)).mtimeMs,
+      safeStat(conversationDb).mtimeMs,
+      safeStat(`${conversationDb}-wal`).mtimeMs,
       safeStat(path.join(root, "annotations", `${entry.name}.pbtxt`)).mtimeMs,
     );
     if (shouldSkipFile(options, transcriptPath, stat, dependencyMtimeMs)) continue;

@@ -488,6 +488,49 @@ describe("Antigravity sessions", () => {
     expect((await store.getSession(`antigravity:${CONVERSATION_ID}`))?.originalTitle).toBe("Second title");
     await store.close();
   });
+
+  it("reindexes when a WAL-mode database writes only its sidecar", async () => {
+    const root = fixture();
+    const paths = antigravityPaths(root, CONVERSATION_ID);
+    writeTranscript(paths.transcript, [
+      { step_index: 0, source: "USER_EXPLICIT", type: "USER_INPUT", status: "DONE", created_at: "2026-09-15T11:00:00Z", content: "<USER_REQUEST>\nIndex me\n</USER_REQUEST>" },
+    ]);
+    writeMetadataDb(paths.metadataDb, { folderUri: pathToFileURL(path.join(root, "workspace")).href });
+    appendStepsTable(paths.metadataDb, [
+      { idx: 1, stepType: 23, status: 3, payload: titlePayload("First title") },
+    ]);
+    // Switch to WAL before the first index. Converting the journal mode rewrites
+    // the database header, which would otherwise move the database mtime past the
+    // index time and make the pass look like a metadata change.
+    const setup = new DatabaseSync(paths.metadataDb);
+    setup.exec("PRAGMA journal_mode=WAL");
+    setup.prepare("UPDATE steps SET step_payload = ? WHERE step_type = 23").run(titlePayload("First title"));
+    setup.close();
+    const store = createInMemoryStore();
+    const loadOptions = { homeDir: root, includeAntigravity: true };
+
+    const cold = await syncDefaultSessionsInBatches(store, { batchSize: 1, loadOptions });
+    expect(cold).toMatchObject({ indexed: 1, skipped: 0 });
+    expect((await store.getSession(`antigravity:${CONVERSATION_ID}`))?.originalTitle).toBe("First title");
+
+    // Antigravity keeps a writing connection open, so the commit lands in the WAL
+    // sidecar. Closing the connection here would checkpoint it back into the
+    // database and move the database mtime, which is not the state the freshness
+    // check has to survive.
+    const writer = new DatabaseSync(paths.metadataDb);
+    try {
+      const databaseMtimeMs = fs.statSync(paths.metadataDb).mtimeMs;
+      writer.prepare("UPDATE steps SET step_payload = ? WHERE step_type = 23").run(titlePayload("Second title"));
+      expect(fs.statSync(paths.metadataDb).mtimeMs).toBe(databaseMtimeMs);
+
+      const refreshed = await syncDefaultSessionsInBatches(store, { batchSize: 1, loadOptions });
+      expect(refreshed).toMatchObject({ indexed: 1, skipped: 0 });
+      expect((await store.getSession(`antigravity:${CONVERSATION_ID}`))?.originalTitle).toBe("Second title");
+    } finally {
+      writer.close();
+    }
+    await store.close();
+  });
   it("passes the antigravity source through warm-index skip checks", () => {
     const root = fixture();
     const paths = antigravityPaths(root, CONVERSATION_ID);
