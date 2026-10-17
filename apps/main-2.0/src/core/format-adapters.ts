@@ -414,6 +414,38 @@ export const geminiAdapter: FormatAdapter = {
   },
 };
 
+// Antigravity transcript rows: user input is XML-wrapped and tool results arrive
+// as GENERIC model steps.
+// Desktop Antigravity and the `agy` CLI share the transcript row shape.
+function antigravityParsedLine(raw: unknown): ParsedLine {
+    if (!raw || typeof raw !== "object") return null;
+    const row = raw as Record<string, unknown>;
+    const type = typeof row.type === "string" ? row.type : "";
+    const content = typeof row.content === "string" ? row.content : "";
+    const timestamp = typeof row.created_at === "string" ? row.created_at : "";
+    if (!content.trim()) return null;
+    if (type === "USER_INPUT") {
+      const request = /<USER_REQUEST>([\s\S]*?)<\/USER_REQUEST>/u.exec(content);
+      return { role: "user", content: (request?.[1] ?? content).trim(), timestamp };
+    }
+    if (type === "PLANNER_RESPONSE") {
+      return { role: "assistant", content, timestamp };
+    }
+    // GENERIC rows are tool results: the loaders project them as trace events, so
+    // a generic message path must not read them as model text.
+    return null;
+}
+
+export const antigravityAdapter: FormatAdapter = {
+  format: "antigravity",
+  parseLine: antigravityParsedLine,
+};
+
+export const antigravityCliAdapter: FormatAdapter = {
+  format: "antigravity-cli",
+  parseLine: antigravityParsedLine,
+};
+
 export function getFormatForSource(source: SessionSource): SessionFormat {
   return sessionSourceDescriptor(source).format;
 }
@@ -437,6 +469,8 @@ export function getAdapter(sourceOrFormat: SessionSource | SessionFormat): Forma
   if (sourceOrFormat === "kimi") return kimiAdapter;
   if (sourceOrFormat === "qwen") return qwenAdapter;
   if (sourceOrFormat === "gemini") return geminiAdapter;
+  if (sourceOrFormat === "antigravity") return antigravityAdapter;
+  if (sourceOrFormat === "antigravity-cli") return antigravityCliAdapter;
   const format = getFormatForSource(sourceOrFormat);
   if (format === "claude") return claudeAdapter;
   if (format === "codebuddy") return codebuddyAdapter;
@@ -454,6 +488,8 @@ export function getAdapter(sourceOrFormat: SessionSource | SessionFormat): Forma
   if (format === "kimi") return kimiAdapter;
   if (format === "qwen") return qwenAdapter;
   if (format === "gemini") return geminiAdapter;
+  if (format === "antigravity") return antigravityAdapter;
+  if (format === "antigravity-cli") return antigravityCliAdapter;
   return codexAdapter;
 }
 

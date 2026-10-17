@@ -135,7 +135,7 @@ Session 页面用于索引、搜索、查看和整理不同编码 Agent 的历�
 | 类型 | 包含的来源 |
 | --- | --- |
 | 默认来源 | Claude Code CLI、Claude Desktop、Codex CLI、Codex Desktop |
-| 可选来源 | CodeBuddy、WorkBuddy、CodeWiz、TClaude、TCodex、OpenClaw、Hermes、OpenCode、ZCode、Cursor Agent、Trae、Qoder |
+| 可选来源 | CodeBuddy、WorkBuddy、CodeWiz、TClaude、TCodex、OpenClaw、Hermes、OpenCode、ZCode、Cursor Agent、Trae、Qoder、Qoder IDE、Pi、Kimi Code、Qwen Code、Gemini CLI、DeepSeek Harness、Antigravity、Antigravity CLI |
 | 扩展环境 | SSH 远程环境、Windows WSL |
 
 可选来源默认关闭，需要先在 **设置 → 可选来源** 中开启。不同来源支持的 Resume、迁移、删除、同步和用量统计能力不同，页面只会显示当前可执行的操作。

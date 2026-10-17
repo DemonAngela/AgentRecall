@@ -20,8 +20,10 @@ export type SessionSource =
   | "deepseek-cli"
   | "kimi-cli"
   | "qwen-code"
-  | "gemini-cli";
-export type SessionFormat = "claude" | "codex" | "codebuddy" | "workbuddy" | "codewiz" | "openclaw" | "hermes" | "opencode" | "zcode" | "cursor" | "trae" | "qoder" | "pi" | "deepseek" | "kimi" | "qwen" | "gemini";
+  | "gemini-cli"
+  | "antigravity"
+  | "antigravity-cli";
+export type SessionFormat = "claude" | "codex" | "codebuddy" | "workbuddy" | "codewiz" | "openclaw" | "hermes" | "opencode" | "zcode" | "cursor" | "trae" | "qoder" | "pi" | "deepseek" | "kimi" | "qwen" | "gemini" | "antigravity" | "antigravity-cli";
 export type SessionSortBy = "smart" | "activity" | "created";
 export type EnvironmentKind = "local" | "wsl" | "ssh";
 export type EnvironmentSyncState = "idle" | "syncing" | "watching" | "polling" | "disconnected" | "error";

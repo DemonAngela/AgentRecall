@@ -33,6 +33,8 @@ const ALL_SOURCES = [
   "qwen-code",
   "gemini-cli",
   "deepseek-cli",
+  "antigravity",
+  "antigravity-cli",
 ] as const satisfies readonly SessionSource[];
 
 describe("session source capability registry", () => {
@@ -76,6 +78,8 @@ describe("session source capability registry", () => {
       "includeQwenCode",
       "includeGeminiCli",
       "includeDeepSeekCli",
+      "includeAntigravity",
+      "includeAntigravityCli",
     ]);
     expect(sessionSourceDescriptor("tclaude-cli")).toMatchObject({ liveFamily: "tclaude", migrationAgent: "claude" });
     expect(sessionSourceDescriptor("tcodex-cli")).toMatchObject({ liveFamily: "tcodex", migrationAgent: "codex" });
@@ -142,6 +146,28 @@ describe("session source capability registry", () => {
       label: "Qwen Code",
       format: "qwen",
       optionalSetting: "includeQwenCode",
+      capabilities: { live: false, resume: false, migrate: false, sessionSync: false, openApp: false },
+    });
+    expect(sessionSourceDescriptor("antigravity")).toMatchObject({
+      label: "Antigravity",
+      format: "antigravity",
+      family: "antigravity",
+      uiFamily: "other",
+      optionalSetting: "includeAntigravity",
+      pendingKey: "antigravity",
+      liveFamily: null,
+      remoteFamily: null,
+      capabilities: { live: false, resume: false, migrate: false, sessionSync: false, openApp: false },
+    });
+    expect(sessionSourceDescriptor("antigravity-cli")).toMatchObject({
+      label: "Antigravity CLI",
+      format: "antigravity-cli",
+      family: "antigravity-cli",
+      uiFamily: "other",
+      optionalSetting: "includeAntigravityCli",
+      pendingKey: "antigravity-cli",
+      liveFamily: null,
+      remoteFamily: null,
       capabilities: { live: false, resume: false, migrate: false, sessionSync: false, openApp: false },
     });
     expect(OPTIONAL_SESSION_SOURCE_DESCRIPTORS.filter(({ remoteCollectorOptional }) => remoteCollectorOptional).map(({ id }) => id)).toEqual([

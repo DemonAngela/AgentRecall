@@ -18,6 +18,8 @@ export type SessionIndexWorkerLoadOptions = Pick<
   | "includeKimiCli"
   | "includeQwenCode"
   | "includeGeminiCli"
+  | "includeAntigravity"
+  | "includeAntigravityCli"
   | "includeCursorAgent"
   | "includeTrae"
   | "includeQoder"

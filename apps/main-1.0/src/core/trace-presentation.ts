@@ -35,10 +35,11 @@ export function tracePresentation(
     || eventType === "codex.turn.aborted"
     || eventType === "task_complete"
     || eventType === "turn_aborted"
+    || eventType === "antigravity.error"
   ) {
     return { category: "lifecycle", visibility: "turn_summary" };
   }
-  if (eventType === "codex.reasoning_summary" || eventType === "agent_reasoning" || eventType === "qwen.thought" || eventType === "gemini.thought") {
+  if (eventType === "codex.reasoning_summary" || eventType === "agent_reasoning" || eventType === "qwen.thought" || eventType === "gemini.thought" || eventType === "antigravity.thought") {
     return { category: "reasoning", visibility: "timeline" };
   }
   if (
@@ -49,13 +50,14 @@ export function tracePresentation(
   ) {
     return { category: "annotation", visibility: "timeline" };
   }
-  if (eventType.startsWith("codex.collaboration.")) {
+  if (eventType.startsWith("codex.collaboration.") || eventType.startsWith("antigravity.collaboration.")) {
     return { category: "collaboration", visibility: "timeline" };
   }
   if (
     eventType === "codex.context.compaction"
     || eventType === "codex.thread.settings"
     || eventType === "codex.thread.rolled_back"
+    || eventType === "antigravity.context.compaction"
     || eventType === "context_compacted"
     || eventType === "thread_rolled_back"
   ) {
