@@ -77,4 +77,18 @@ describe("formatRelativeTime", () => {
       now.mockRestore();
     }
   });
+
+  it("shows a calendar date instead of a day count once a session is a week old", () => {
+    const now = vi.spyOn(Date, "now").mockReturnValue(new Date(2026, 7, 10, 9, 0, 0).getTime());
+    try {
+      const sixDaysAgo = new Date(2026, 7, 4, 9, 0, 0).getTime();
+      const sevenDaysAgo = new Date(2026, 7, 3, 9, 0, 0).getTime();
+      expect(formatRelativeTime(sixDaysAgo, "zh")).toBe("6天前");
+      expect(formatRelativeTime(sixDaysAgo, "en")).toBe("6d ago");
+      expect(formatRelativeTime(sevenDaysAgo, "zh")).toBe("2026/8/3");
+      expect(formatRelativeTime(sevenDaysAgo, "en")).toBe("8/3/2026");
+    } finally {
+      now.mockRestore();
+    }
+  });
 });
