@@ -938,6 +938,42 @@ describe("PostgresSessionRepository", () => {
       .resolves.toMatchObject({ total: { sessionCount: 1, messageCount: messages.length } });
   });
 
+  it("keeps a visible Token event when a hidden Session holds the larger duplicate", async () => {
+    await repository.upsertIndexedSession(session(), messages, tokens, traces);
+    await repository.upsertIndexedSession(
+      session({
+        sessionKey: "codex:subagent-a",
+        rawId: "subagent-a",
+        filePath: "/fixtures/subagent-a.jsonl",
+        isSubagent: true,
+      }),
+      messages,
+      [{
+        ...tokens[0],
+        inputTokens: 900,
+        outputTokens: 0,
+        cachedInputTokens: 0,
+        cacheCreationInputTokens: 0,
+        reasoningOutputTokens: 0,
+        totalTokens: 900,
+      }],
+      traces,
+    );
+
+    const visible = await statsRepository.getStats(
+      { period: "allTime", excludeSubagents: true },
+      Date.parse("2026-07-20T12:00:00.000Z"),
+    );
+    expect(visible.total.totalTokens).toBe(175);
+    expect(visible.dailyTokenUsage.reduce((sum, day) => sum + day.totalTokens, 0)).toBe(175);
+
+    const everySession = await statsRepository.getStats(
+      { period: "allTime" },
+      Date.parse("2026-07-20T12:00:00.000Z"),
+    );
+    expect(everySession.total.totalTokens).toBe(900);
+  });
+
   it("compares the previous period and returns a trimmed Token trend", async () => {
     await repository.upsertIndexedSession(session(), messages, tokens, traces);
 

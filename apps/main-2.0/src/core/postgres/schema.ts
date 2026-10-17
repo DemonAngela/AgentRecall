@@ -2162,4 +2162,14 @@ export const POSTGRES_MIGRATIONS: readonly PostgresMigration[] = [{
       PRIMARY KEY (scope_key, asset_id)
     )`,
   ],
+}, {
+  version: 61,
+  name: "index Token events for read-time deduplication",
+  statements: [
+    // Session statistics deduplicate Token events per dedupe_key ordered by
+    // (total_tokens desc, occurred_at); without this index every stats request
+    // sorts an entire Token range before it can count anything.
+    `CREATE INDEX IF NOT EXISTS token_events_dedupe_idx
+      ON agent_recall.token_events (dedupe_key, total_tokens DESC, occurred_at)`,
+  ],
 }];

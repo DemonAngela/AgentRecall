@@ -199,6 +199,11 @@ export class PostgresSessionStatsRepository {
 
     const historyDays = options.dailyHistoryDays === 30 || options.dailyHistoryDays === 90 ? options.dailyHistoryDays : 7;
     const days = dailyRanges(now, historyDays);
+    // Deduplicate Token events in index order before applying Session
+    // visibility: the window-function form cannot use the dedupe index while it
+    // joins Sessions, so every request sorted all Token columns of the range.
+    // "rescued" restores the previous result when the winning duplicate belongs
+    // to a hidden Session that also has a visible duplicate.
     const dailyRows = await this.database.query<{
       bucket_index: number;
       input_tokens: number | string;
@@ -209,17 +214,48 @@ export class PostgresSessionStatsRepository {
       total_tokens: number | string;
     }>(
       `
-        with ranked as (
-          select
-            events.*,
-            row_number() over (
-              partition by events.dedupe_key
-              order by events.total_tokens desc, events.occurred_at
-            ) as row_rank
+        with deduplicated as (
+          select distinct on (events.dedupe_key)
+            events.dedupe_key,
+            events.session_key,
+            events.occurred_at,
+            events.input_tokens,
+            events.output_tokens,
+            events.cached_input_tokens,
+            events.cache_creation_input_tokens,
+            events.reasoning_output_tokens,
+            events.total_tokens
+          from agent_recall.token_events events
+          where events.occurred_at >= $1 and events.occurred_at <= $2
+          order by events.dedupe_key, events.total_tokens desc, events.occurred_at
+        ),
+        visible as (
+          select deduplicated.*
+          from deduplicated
+          where exists (
+            select 1
+            from agent_recall.local_sessions sessions
+            where sessions.session_key = deduplicated.session_key
+              ${sessionAnd}
+          )
+        ),
+        rescued as (
+          select distinct on (events.dedupe_key)
+            events.dedupe_key,
+            events.session_key,
+            events.occurred_at,
+            events.input_tokens,
+            events.output_tokens,
+            events.cached_input_tokens,
+            events.cache_creation_input_tokens,
+            events.reasoning_output_tokens,
+            events.total_tokens
           from agent_recall.token_events events
           join agent_recall.local_sessions sessions on sessions.session_key = events.session_key
           where events.occurred_at >= $1 and events.occurred_at <= $2
             ${sessionAnd}
+            and not exists (select 1 from visible where visible.dedupe_key = events.dedupe_key)
+          order by events.dedupe_key, events.total_tokens desc, events.occurred_at
         )
         select
           width_bucket(occurred_at, $3::timestamptz[]) - 1 as bucket_index,
@@ -227,8 +263,7 @@ export class PostgresSessionStatsRepository {
           sum(cached_input_tokens) as cached_input_tokens,
           sum(greatest(cache_creation_input_tokens, 0)) as cache_creation_input_tokens,
           sum(reasoning_output_tokens) as reasoning_output_tokens, sum(total_tokens) as total_tokens
-        from ranked
-        where row_rank = 1
+        from (select * from visible union all select * from rescued) rows
         group by bucket_index
       `,
       [
