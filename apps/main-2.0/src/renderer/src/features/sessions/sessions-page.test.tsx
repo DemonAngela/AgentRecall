@@ -4,6 +4,7 @@ import { act, createRef } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { SavedSearch } from "../../../../core/store/saved-searches";
+import { customDateRangeFromInputs, naturalDateRange } from "./date-presets";
 import { SessionsPage, type SessionsPageActions, type SessionsPageModel } from "./sessions-page";
 
 describe("SessionsPage search tools", () => {
@@ -227,6 +228,60 @@ describe("SessionsPage search tools", () => {
       "skill",
       "system",
     ]);
+  });
+
+  it("applies natural date presets from the calendar popover", async () => {
+    const now = new Date(2026, 9, 13, 15, 30, 12).getTime();
+    const nowSpy = vi.spyOn(Date, "now").mockReturnValue(now);
+    const actions = createActions();
+    await act(async () => root.render(<SessionsPage model={createModel()} actions={actions} />));
+    const trigger = buttonByLabel(container, "Custom date range");
+    expect(trigger.getAttribute("aria-expanded")).toBe("false");
+    await act(async () => trigger.click());
+    const menu = container.querySelector('[role="menu"][aria-label="Custom date range"]');
+    if (!menu) throw new Error("Expected the custom date range menu");
+    expect([...menu.querySelectorAll("button")].map((button) => button.textContent)).toEqual([
+      "Today",
+      "Yesterday",
+      "This week",
+      "This month",
+      "Last month",
+    ]);
+    await act(async () => menu.querySelector("button")!.click());
+    expect(actions.setCustomDateRange).toHaveBeenCalledExactlyOnceWith(naturalDateRange("today", now));
+    expect(actions.setDateRange).not.toHaveBeenCalled();
+    expect(container.querySelector('[role="menu"][aria-label="Custom date range"]')).toBeNull();
+    nowSpy.mockRestore();
+  });
+
+  it("applies explicit start and end dates from the calendar popover", async () => {
+    const actions = createActions();
+    await act(async () => root.render(<SessionsPage model={createModel()} actions={actions} />));
+    await act(async () => buttonByLabel(container, "Custom date range").click());
+    const [startInput, endInput] = [...container.querySelectorAll<HTMLInputElement>(".date-filter-menu input[type=date]")];
+    if (!startInput || !endInput) throw new Error("Expected start and end date inputs");
+    // Assign through the prototype setter so React's value tracker still sees a change.
+    const setDateValue = (input: HTMLInputElement, value: string) => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set?.call(input, value);
+      input.dispatchEvent(new Event("change", { bubbles: true }));
+    };
+    await act(async () => setDateValue(startInput, "2026-09-30"));
+    await act(async () => setDateValue(endInput, "2026-10-02"));
+    await act(async () => buttonByLabel(container, "Apply date range").click());
+    expect(actions.setCustomDateRange).toHaveBeenCalledExactlyOnceWith(
+      customDateRangeFromInputs("2026-09-30", "2026-10-02"),
+    );
+    expect(container.querySelector('[role="menu"][aria-label="Custom date range"]')).toBeNull();
+  });
+
+  it("clears the active custom range when a rolling preset is chosen", async () => {
+    const actions = createActions();
+    const model = createModel();
+    model.customDateRange = { dayStart: 1, dayEndExclusive: 2 };
+    await act(async () => root.render(<SessionsPage model={model} actions={actions} />));
+    await act(async () => buttonByLabel(container, "Last 7 days").click());
+    expect(actions.setDateRange).toHaveBeenCalledWith("7d");
+    expect(actions.clearCustomDateRange).toHaveBeenCalledExactlyOnceWith();
   });
 });
 
