@@ -14,6 +14,10 @@ concurrency:
 
 jobs:
   update:
+    # The chart and its data file name this repository. A fork inherits both,
+    # so its copy describes a different project and the generator rejects it;
+    # skip the job there instead of failing on every scheduled run.
+    if: github.repository == 'zszz3/AgentRecall'
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository

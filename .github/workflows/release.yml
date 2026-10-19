@@ -17,6 +17,11 @@ env:
 
 jobs:
   plan:
+    # Releases are published from this repository only. A fork carries no
+    # release tags, so the plan cannot resolve a V2 base tag and every
+    # scheduled run fails. The downstream jobs require
+    # needs.plan.result == 'success', so they skip along with it.
+    if: github.repository == 'zszz3/AgentRecall'
     runs-on: ubuntu-latest
     outputs:
       v2_publish: ${{ steps.pending.outputs.v2_publish }}
