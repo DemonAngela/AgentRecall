@@ -18,8 +18,9 @@ function posixQuote(value: string): string {
   return `'${value.replace(/'/g, "'\\''")}'`;
 }
 
-function powershellQuote(value: string): string {
-  return `'${value.replace(/'/g, "''")}'`;
+// PowerShell treats these typographic single quotes as literal delimiters too.
+export function quotePowerShellLiteral(value: string): string {
+  return `'${value.replace(/['\u2018-\u201B]/g, "$&$&")}'`;
 }
 
 export function withPosixTerminalTitle(command: string, title: string): string {
@@ -27,7 +28,7 @@ export function withPosixTerminalTitle(command: string, title: string): string {
 }
 
 export function withPowerShellTerminalTitle(command: string, title: string): string {
-  return `$Host.UI.RawUI.WindowTitle = ${powershellQuote(normalizeTerminalTitle(title))}; ${command}`;
+  return `$Host.UI.RawUI.WindowTitle = ${quotePowerShellLiteral(normalizeTerminalTitle(title))}; ${command}`;
 }
 
 export function withCmdTerminalTitle(command: string, title: string): string {

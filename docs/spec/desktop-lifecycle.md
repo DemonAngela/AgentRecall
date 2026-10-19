@@ -16,6 +16,16 @@
 
 方法名 whenSettled 不表示 reject 后也会运行任务；不能仅凭名称推断 finally 语义。已启动任务的停止仍由其服务负责。调度器本身也不替业务任务吞掉和展示所有异常。
 
+## Windows 交互终端启动
+
+V1/V2 的原生恢复、迁移后继续和共用终端入口经各自的 `windows-terminal.ts` 调用 Windows ShellExecute，目标窗口显式 Normal。隐藏的 PowerShell 辅助进程只负责解析可执行文件、提交启动并返回 PID；目标终端由用户和原生 CLI 持有，管理器退出不应关闭它。
+
+不能直接对 PowerShell 使用 Node `spawn(..., { detached: true, stdio: "ignore" })` 作为交互终端：Windows DETACHED_PROCESS 可使 PowerShell 不执行命令便退出 0，spawn 成功不代表终端已打开。辅助进程不存在、权限或启动错误必须失败；候选终端未安装返回 ENOENT，允许上层继续回退。确认终端启动不等于确认 CLI 完成账户登录或成功载入会话。
+
+普通可执行程序参数遵循 Windows argv 引号规则；cmd 的 `/k` 源码单独用 `/s` 处理外层引号。PowerShell 字符串不得解释项目路径或标题中的插值、单引号和排版引号。回归用合成 CLI 校验参数、中文/空格目录、stdin/stdout TTY，并清理自己创建的终端，不访问真实源会话。
+
+实现与回归：[V1](../../apps/main-1.0/src/core/windows-terminal.ts)、[V1 测试](../../apps/main-1.0/src/core/windows-terminal.test.ts)、[V2](../../apps/main-2.0/src/core/windows-terminal.ts)、[V2 测试](../../apps/main-2.0/src/core/windows-terminal.test.ts)。
+
 ## 退出顺序约束
 
 退出先阻止新任务，再取消未触发的启动工作，随后由拥有进程、watcher、数据库和运行任务的服务清理资源。V2 Eval 需要取消并等待活动执行，Runtime 驱动需要关闭其子进程，窗口归属的团队预览需要失效。

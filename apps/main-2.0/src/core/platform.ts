@@ -24,6 +24,7 @@ import {
   withPowerShellTerminalTitle,
 } from "./terminal-title";
 import { sessionSourceDescriptor } from "./session-sources";
+import { launchWindowsTerminal } from "./windows-terminal";
 import type { MigrationTarget, SessionSearchResult, SessionSource } from "./types";
 import { zcodeDatabasePathFromHome } from "./zcode-session-writer";
 import {
@@ -846,6 +847,9 @@ function existingDirectory(value: string | null | undefined): string {
 }
 
 function spawnDetached(command: string, args: string[], cwd?: string): Promise<void> {
+  if (process.platform === "win32") {
+    return launchWindowsTerminal(command, args, cwd).then(() => undefined);
+  }
   return new Promise((resolve, reject) => {
     const child = spawn(command, args, { cwd, detached: true, stdio: "ignore", windowsHide: false });
     child.once("error", reject);

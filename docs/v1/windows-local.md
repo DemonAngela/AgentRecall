@@ -32,10 +32,11 @@ npm run local:v1
 - OpenCode 恢复仅限本机；SSH/WSL、OpenCode 迁移和云同步未适配。保留原权限提示，不添加跳过权限参数。
 - 打开项目目录沿用桌面系统文件管理器入口，不新建、移动或删除磁盘文件夹。
 - 关闭主窗口可能缩至托盘；完全退出使用托盘菜单。诊断日志在本机配置目录的 `runtime.log`，不要把完整真实日志或索引上传至公开仓库。
+- Windows 原生终端通过系统 ShellExecute 正常窗口启动，而不是仅创建无控制台的后台 shell；启动失败会显示错误。终端打开后若出现 CLI 登录或会话错误，应在该终端处理，不代表管理器已验证 CLI 登录。
 
 ## 调试与验证
 
 - 回归入口：`scripts/local-v1-profile.test.mjs`、v1 的 `local-source-profile.test.ts`、`native-resume-preflight.test.ts`、`platform.test.ts` 与 `session-ui.test.ts`。测试使用合成数据与临时目录。
 - `--debug-port=<端口>` 仅用于临时回环 CDP 调试；调试结束退出应用，正常启动不传该参数。不要将端口转发、共享或暴露到局域网。
 - 原生恢复可启动终端并更新 CLI 自身运行状态，最终应由用户选择一个常用会话确认；自动验证不向真实会话发送消息。
-- 修改范围有意只限用户选用的 v1；v2 继续保持独立的 PostgreSQL、设置和恢复能力，不读取或迁移它的数据。
+- 本机产品适配限 v1；共用的 Windows 终端启动 Bug 同步修正到 v2，除此之外不扩大适配范围。v2 继续保持独立的 PostgreSQL、设置和恢复能力，不读取或迁移它的数据。
