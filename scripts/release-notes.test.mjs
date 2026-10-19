@@ -278,7 +278,7 @@ test("workflows require branch notes and publish accumulated changes every day o
   assert.match(releaseWorkflow, /release-notes\.mjs combine --target v2/);
   assert.doesNotMatch(releaseWorkflow, /release-notes\.mjs dual/);
   assert.match(releaseWorkflow, /cancel-in-progress:\s*false/);
-  assert.match(releaseWorkflow, /^\s{2}plan:\s*\r?\n\s{4}runs-on:\s*ubuntu-latest/mu);
+  assert.match(releaseWorkflow, /^\s{2}plan:\s*\r?\n(?:\s*(?:#.*|if:.*)\r?\n)*\s{4}runs-on:\s*ubuntu-latest/mu);
   assert.match(
     releaseWorkflow,
     /openviking-runtime:\s+needs:\s*plan\s+if:\s*needs\.plan\.outputs\.v2_publish == 'true' && needs\.plan\.outputs\.runtime_reuse != 'true'[\s\S]*fail-fast:\s*false/,
@@ -320,6 +320,20 @@ test("manual contributor updates only write the default branch", async () => {
   const workflow = await readFile(".github/workflows/contributors.yml", "utf8");
   assert.match(workflow, /workflow_dispatch:/);
   assert.match(workflow, /contrib-readme-job:\s+if:\s+github\.ref == 'refs\/heads\/main'/);
+});
+
+test("scheduled release and star-history jobs only run in the canonical repository", async () => {
+  const releaseWorkflow = await readFile(".github/workflows/release.yml", "utf8");
+  const starHistoryWorkflow = await readFile(".github/workflows/update-star-history.yml", "utf8");
+  const guard = /^\s*if: github\.repository == 'zszz3\/AgentRecall'$/mu;
+  // A fork carries no release tags, and its copy of the star-history data names a
+  // different project, so both entry jobs have to skip there rather than fail.
+  const planJob = releaseWorkflow.slice(
+    releaseWorkflow.indexOf("  plan:"),
+    releaseWorkflow.indexOf("  openviking-runtime:"),
+  );
+  assert.match(planJob, guard);
+  assert.match(starHistoryWorkflow.slice(starHistoryWorkflow.indexOf("  update:")), guard);
 });
 
 test("V2 releases reuse only fingerprinted complete OpenViking runtime sets", async () => {
