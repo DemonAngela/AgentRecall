@@ -23,6 +23,7 @@ docs/eval/
 .qoder/
 
 # 会话产生的临时预览产物，不入库
+.local/
 wbtest/
 wb_*.jpg
 wb_*.json

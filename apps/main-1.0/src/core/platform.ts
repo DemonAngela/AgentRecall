@@ -26,6 +26,7 @@ import {
   withPowerShellTerminalTitle,
 } from "./terminal-title";
 import { sessionSourceDescriptor } from "./session-sources";
+import { assertLocalNativeResumeSource } from "./native-resume-preflight";
 import { zcodeDatabasePathFromHome } from "./zcode-session-writer";
 import type { MigrationTarget, SessionSearchResult, SessionSource } from "./types";
 import { normalizeSummaryReasoningEffort, type SummaryReasoningEffort } from "./summary-settings";
@@ -75,6 +76,7 @@ export interface AppSettings {
   claudeBinary: string;
   codexBinary: string;
   codeBuddyBinary: string;
+  openCodeBinary: string;
   codeWizBinary: string;
   cursorBinary: string;
   tclaudeBinary: string;
@@ -88,6 +90,7 @@ export interface AppSettings {
   includeOpenClaw: boolean;
   includeHermes: boolean;
   includeOpenCode: boolean;
+  includeDefaultSources: boolean;
   includeZcode: boolean;
   includeCursorAgent: boolean;
   includeTrae: boolean;
@@ -156,6 +159,7 @@ export const defaultSettings: AppSettings = {
   claudeBinary: "claude",
   codexBinary: "codex",
   codeBuddyBinary: "codebuddy",
+  openCodeBinary: "opencode",
   codeWizBinary: "codewiz",
   cursorBinary: "cursor-agent",
   tclaudeBinary: "tclaude",
@@ -169,6 +173,7 @@ export const defaultSettings: AppSettings = {
   includeOpenClaw: false,
   includeHermes: false,
   includeOpenCode: false,
+  includeDefaultSources: true,
   includeZcode: false,
   includeCursorAgent: false,
   includeTrae: false,
@@ -376,7 +381,7 @@ const MIGRATION_CLI_VERSION_RULES: Record<MigrationTarget, VersionRule[]> = {
   zcode: [],
 };
 
-function migrationTargetForResumeSource(source: SessionSource): MigrationTarget | null {
+function migrationTargetForResumeSource(source: SessionSource): MigrationTarget | "opencode" | null {
   return sessionSourceDescriptor(source).resumeTarget;
 }
 
@@ -418,6 +423,22 @@ function buildResumeRuntimeProcessSpec(
   const target = migrationTargetForResumeSource(session.source);
   if (!target) {
     throw new Error(`Resume is not supported for ${sourceDisplayName(session.source)} sessions yet.`);
+  }
+
+  // OpenCode has a native resume target, not a portable migration writer.
+  // Never route a local opencode2 executable to an SSH/WSL environment.
+  if (target === "opencode") {
+    if (useRemoteBinary || session.environmentKind === "ssh" || session.environmentKind === "wsl") {
+      throw new Error("OpenCode 恢复目前仅支持本机会话，不支持 SSH/WSL。");
+    }
+    if (!/^ses_[A-Za-z0-9]+$/.test(session.rawId)) {
+      throw new Error("OpenCode 会话 ID 无效，请重新索引后重试。");
+    }
+    if (!session.projectPath || !(path.isAbsolute(session.projectPath) || path.win32.isAbsolute(session.projectPath))) {
+      throw new Error("OpenCode 会话缺少真实项目目录，不能在未知目录恢复。");
+    }
+    if (!settings.openCodeBinary.trim()) throw new Error("请先配置 OpenCode CLI 路径。");
+    return { command: settings.openCodeBinary, args: ["--session", session.rawId], cwd: session.projectPath };
   }
 
   const args = migrationResumeArgs(target, session.rawId);
@@ -964,6 +985,7 @@ export async function openResumeInTerminal(
   settings: AppSettings,
   opts: ResumeOpenOptions = {},
 ): Promise<void> {
+  assertLocalNativeResumeSource(session);
   const sshArgs = resolveSshArgs(opts);
   const command = getResumeCommand(session, settings, { ...opts, withCwd: true });
   const title = session.displayTitle || session.originalTitle || session.rawId;

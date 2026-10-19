@@ -8,6 +8,7 @@
 | --- | --- |
 | 安装、更新、回滚或卸载 | [安装指南](../Install.md) |
 | 使用稳定版 | [V1 指南](v1/guide.md) · [English](v1/guide.en.md) |
+| 在此 fork 管理本机 CodeBuddy / OpenCode 2 | [Windows 双 CLI 适配](v1/windows-local.md) |
 | 开始使用 V2，搜索和恢复会话 | [V2 使用指南](v2/guide.md) · [会话生命周期](v2/session-lifecycle.md) |
 | 连接团队、Pull/Push、分享会话或管理资源 | [团队协作流程](v2/team-collaboration.md) · [团队空间操作](v2/team-workspace.md) |
 | 编写团队资产清单，了解安装和恢复规则 | [团队资产参考](v2/team-assets.md) |

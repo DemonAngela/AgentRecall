@@ -13,6 +13,7 @@
     "setup:v2": "node scripts/setup-app.mjs apps/main-2.0",
     "dev": "npm run dev:v1",
     "dev:v1": "npm --prefix apps/main-1.0 run dev",
+    "local:v1": "node scripts/local-v1.mjs",
     "dev:v2": "npm --prefix apps/main-2.0 run dev",
     "test": "npm run test:repo && npm run test:v1 && npm run test:v2",
     "test:repo": "node --test scripts/*.test.mjs",

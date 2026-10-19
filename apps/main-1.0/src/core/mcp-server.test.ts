@@ -66,21 +66,21 @@ async function runMcpWithMigrationBundle(bundleSource: string): Promise<{
   const binDir = path.join(root, "bin");
   const bundleDir = path.join(root, "out", "mcp");
   const dbPath = path.join(root, "sessions.db");
-  fs.mkdirSync(binDir, { recursive: true });
-  fs.mkdirSync(bundleDir, { recursive: true });
-  fs.copyFileSync(path.resolve("bin", "agent-recall-mcp.mjs"), path.join(binDir, "agent-recall-mcp.mjs"));
-  fs.writeFileSync(path.join(bundleDir, "migration-entry.js"), bundleSource, "utf8");
-  fs.writeFileSync(path.join(root, "package.json"), '{"type":"module"}\n', "utf8");
-  fs.symlinkSync(path.resolve("node_modules"), path.join(root, "node_modules"), "dir");
-
-  const db = new DatabaseSync(dbPath);
-  const store = new SessionStore(db);
-  store.close();
-
   try {
+    fs.mkdirSync(binDir, { recursive: true });
+    fs.mkdirSync(bundleDir, { recursive: true });
+    fs.copyFileSync(path.resolve("bin", "agent-recall-mcp.mjs"), path.join(binDir, "agent-recall-mcp.mjs"));
+    fs.writeFileSync(path.join(bundleDir, "migration-entry.js"), bundleSource, "utf8");
+    fs.writeFileSync(path.join(root, "package.json"), '{"type":"module"}\n', "utf8");
+    fs.symlinkSync(path.resolve("node_modules"), path.join(root, "node_modules"), process.platform === "win32" ? "junction" : "dir");
+
+    const db = new DatabaseSync(dbPath);
+    const store = new SessionStore(db);
+    store.close();
+
     return await new Promise((resolve, reject) => {
       const child = spawn(process.execPath, [path.join(binDir, "agent-recall-mcp.mjs")], {
-        env: { ...process.env, AGENT_RECALL_DB: dbPath },
+        env: { ...process.env, HOME: root, USERPROFILE: root, CODEX_HOME: path.join(root, ".codex"), CLAUDE_CONFIG_DIR: path.join(root, ".claude"), AGENT_RECALL_DB: dbPath },
         stdio: ["pipe", "pipe", "pipe"],
       });
       const responses = new Map<number, JsonRpcResponse>();
@@ -92,9 +92,11 @@ async function runMcpWithMigrationBundle(bundleSource: string): Promise<{
         if (settled) return;
         settled = true;
         clearTimeout(timeout);
+        child.once("close", () => {
+          if (error) reject(error);
+          else resolve({ initialize: responses.get(1)!, toolsList: responses.get(2)!, stderr });
+        });
         child.kill();
-        if (error) reject(error);
-        else resolve({ initialize: responses.get(1)!, toolsList: responses.get(2)!, stderr });
       };
       const timeout = setTimeout(() => finish(new Error(`MCP probe timed out. stderr: ${stderr}`)), 5_000);
 

@@ -5,6 +5,7 @@ import type { SessionSource } from "../core/types";
 export type SessionIndexWorkerLoadOptions = Pick<
   SessionLoadOptions,
   | "homeDir"
+  | "includeDefaultSources"
   | "includeTclaude"
   | "includeTcodex"
   | "includeCodeBuddyCli"

@@ -574,6 +574,7 @@ function codexDesktopHome(): string {
 
 function listVisibleProjects(options: ProjectQueryOptions = {}): ProjectSummary[] {
   const indexed = store.listProjects(options);
+  if (getSettings().includeDefaultSources === false) return indexed;
   if (options.environmentId && options.environmentId !== "all" && options.environmentId !== "local") return indexed;
   return mergeCodexDesktopProjects(indexed, readCodexDesktopProjects(codexDesktopHome()));
 }
@@ -1320,6 +1321,7 @@ function runIndexSync(): Promise<IndexStatus> {
       timeBudgetMs: 8,
       disabledSources: disabledOptionalSources(settings),
       loadOptions: {
+        includeDefaultSources: settings.includeDefaultSources,
         includeTclaude: settings.includeTclaude,
         includeTcodex: settings.includeTcodex,
         includeCodeBuddyCli: settings.includeCodeBuddyCli,
@@ -2716,10 +2718,12 @@ const applicationReady = hasSingleInstanceLock
       store = new SessionStore(dbPath);
       quotaService = createQuotaService();
       // Publish the live database path so the standalone MCP server can find it.
-      try {
-        writeDbPointer(dbPath);
-      } catch {
-        // Non-fatal: the MCP server can still be pointed at the DB via env var.
+      if (process.env.AGENT_RECALL_DISABLE_DB_POINTER !== "1") {
+        try {
+          writeDbPointer(dbPath);
+        } catch {
+          // Non-fatal: the MCP server can still be pointed at the DB via env var.
+        }
       }
       try {
         ensureAgentRecallMcpPreference();

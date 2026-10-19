@@ -92,6 +92,7 @@ function resolveKimiCodeRoot(homeDir: string, options: SessionLoadOptions): stri
 
 export interface SessionLoadOptions {
   homeDir?: string;
+  includeDefaultSources?: boolean;
   includePi?: boolean;
   includeKimiCli?: boolean;
   includeQwenCode?: boolean;
@@ -5781,13 +5782,15 @@ export function loadDefaultSessions(options: SessionLoadOptions = {}): LoadedSes
 
 export function* loadDefaultSessionsIterator(options: SessionLoadOptions = {}): Generator<LoadedSession> {
   const homeDir = options.homeDir ?? os.homedir();
-  yield* loadClaudeCliSessionsIterator(path.join(homeDir, ".claude"), "claude-cli", options);
-  yield* loadClaudeAppSessionsIterator(
-    path.join(homeDir, "Library", "Application Support", "Claude", "claude-code-sessions"),
-    path.join(homeDir, ".claude"),
-    options,
-  );
-  yield* loadCodexSessionsIterator(path.join(homeDir, ".codex"), undefined, options);
+  if (options.includeDefaultSources !== false) {
+    yield* loadClaudeCliSessionsIterator(path.join(homeDir, ".claude"), "claude-cli", options);
+    yield* loadClaudeAppSessionsIterator(
+      path.join(homeDir, "Library", "Application Support", "Claude", "claude-code-sessions"),
+      path.join(homeDir, ".claude"),
+      options,
+    );
+    yield* loadCodexSessionsIterator(path.join(homeDir, ".codex"), undefined, options);
+  }
   if (options.includePi) {
     yield* loadPiSessionsIterator(path.join(homeDir, PI_SESSIONS_DIR), options);
   }
@@ -5809,7 +5812,7 @@ export function* loadDefaultSessionsIterator(options: SessionLoadOptions = {}): 
     yield* loadOpenClawSessionsIterator(path.join(homeDir, ".clawdbot"), options);
   }
   if (options.includeHermes) yield* loadHermesSessions();
-  if (options.includeOpenCode) yield* loadOpenCodeSessions();
+  if (options.includeOpenCode) yield* loadOpenCodeSessions(path.join(homeDir, ".local", "share", "opencode"));
   if (options.includeZcode) yield* loadZcodeSessions(path.join(homeDir, ".zcode"));
   if (options.includeCodeWizCli) yield* loadCodeWizSessions(path.join(homeDir, CODEWIZ_SHARE_DIR));
   if (options.includeCursorAgent) yield* loadCursorAgentSessionsIterator(path.join(homeDir, ".cursor"), options);
@@ -5845,13 +5848,15 @@ export async function* loadDefaultSessionsAsyncIterator(options: SessionLoadOpti
       options.onSourceLoadFailure(sources, error);
     }
   }
-  yield* isolated(["claude-cli"], () => loadClaudeCliSessionsIterator(path.join(homeDir, ".claude"), "claude-cli", options));
-  yield* isolated(["claude-app"], () => loadClaudeAppSessionsIterator(
-    path.join(homeDir, "Library", "Application Support", "Claude", "claude-code-sessions"),
-    path.join(homeDir, ".claude"),
-    options,
-  ));
-  yield* isolated(["codex-cli", "codex-app"], () => loadCodexSessionsAsyncIterator(path.join(homeDir, ".codex"), undefined, options));
+  if (options.includeDefaultSources !== false) {
+    yield* isolated(["claude-cli"], () => loadClaudeCliSessionsIterator(path.join(homeDir, ".claude"), "claude-cli", options));
+    yield* isolated(["claude-app"], () => loadClaudeAppSessionsIterator(
+      path.join(homeDir, "Library", "Application Support", "Claude", "claude-code-sessions"),
+      path.join(homeDir, ".claude"),
+      options,
+    ));
+    yield* isolated(["codex-cli", "codex-app"], () => loadCodexSessionsAsyncIterator(path.join(homeDir, ".codex"), undefined, options));
+  }
   if (options.includePi) {
     yield* isolated(["pi-cli"], () => loadPiSessionsIterator(path.join(homeDir, PI_SESSIONS_DIR), options));
   }
@@ -5875,7 +5880,7 @@ export async function* loadDefaultSessionsAsyncIterator(options: SessionLoadOpti
     yield* isolated(["openclaw"], () => loadOpenClawSessionsIterator(path.join(homeDir, ".clawdbot"), options));
   }
   if (options.includeHermes) yield* isolated(["hermes"], () => loadHermesSessions(undefined, strict));
-  if (options.includeOpenCode) yield* isolated(["opencode-cli"], () => loadOpenCodeSessions(undefined, strict));
+  if (options.includeOpenCode) yield* isolated(["opencode-cli"], () => loadOpenCodeSessions(path.join(homeDir, ".local", "share", "opencode"), strict));
   if (options.includeZcode) yield* isolated(["zcode-cli"], () => loadZcodeSessions(path.join(homeDir, ".zcode"), strict));
   if (options.includeCodeWizCli) {
     yield* isolated(["codewiz-cli"], () => loadCodeWizSessions(path.join(homeDir, CODEWIZ_SHARE_DIR), strict));

@@ -16,6 +16,14 @@
 
 ## 接口与所有权
 
+### 此 fork 的 V1 本机配置
+
+`includeDefaultSources` 默认 `true`，保持原 Claude/Codex 来源；设为 `false` 时，同步/异步默认加载器均跳过这些来源，主进程项目查询也不再合并 Codex Desktop 空项目，来源筛选隐藏停用项。OpenCode 加载使用传入的 `homeDir`，不绕过隔离目录读取宿主用户库。该设置经 v1 索引 worker 的类型化输入传递，不改变源文件和索引 Schema。
+
+OpenCode 原生恢复目标独立于可迁移目标，只允许本机 `--session`，不能据此启用迁移或 SSH/WSL。启动前对 CodeBuddy/OpenCode 检查项目目录和源文件；OpenCode 只读验证源 ID 和目录，拒绝会话已删除后的隐式创建。实现见 [预检](../../apps/main-1.0/src/core/native-resume-preflight.ts)、[平台启动](../../apps/main-1.0/src/core/platform.ts)；边界测试见同目录对应 `.test.ts` 及 `local-source-profile.test.ts`。
+
+以上仅用于用户指定的 v1 本机产品线，v2 不新增这些能力或配置；操作与安全边界见 [本机指南](../v1/windows-local.md)。
+
 | 层 | 责任 | 实现入口 |
 | --- | --- | --- |
 | Loader | 源格式、文件发现、标准化及 Codex 增量状态 | [V1 loader](../../apps/main-1.0/src/core/session-loader.ts)、[V2 loader](../../apps/main-2.0/src/core/session-loader.ts) |

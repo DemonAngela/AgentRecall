@@ -111,7 +111,7 @@ const BASE_SOURCE_FILTERS: Array<{ label: string; value: SearchOptions["source"]
 
 export function sourceFilters(settings: AppSettings | null): Array<{ label: string; value: SearchOptions["source"] }> {
   return [
-    ...BASE_SOURCE_FILTERS,
+    ...BASE_SOURCE_FILTERS.filter((item) => settings?.includeDefaultSources !== false || item.value === "all"),
     ...OPTIONAL_SESSION_SOURCE_DESCRIPTORS.flatMap((descriptor) =>
       settings?.[descriptor.optionalSetting] ? [{ label: descriptor.label, value: descriptor.id }] : []),
   ];

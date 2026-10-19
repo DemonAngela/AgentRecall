@@ -88,6 +88,10 @@ describe("sidebar project presentation", () => {
 });
 
 describe("sourceFilters", () => {
+  it("本机双 CLI 配置不显示已停用的 Claude/Codex 来源", () => {
+    expect(sourceFilters({ ...defaultSettings, includeDefaultSources: false, includeCodeBuddyCli: true, includeOpenCode: true }))
+      .toEqual([{ label: "All", value: "all" }, { label: "CodeBuddy CLI", value: "codebuddy-cli" }, { label: "OpenCode", value: "opencode-cli" }]);
+  });
   it("shows WorkBuddy only when its optional source is enabled", () => {
     expect(sourceFilters(defaultSettings)).not.toContainEqual({ label: "WorkBuddy", value: "workbuddy-cli" });
     expect(sourceFilters({ ...defaultSettings, includeWorkBuddy: true })).toContainEqual({

@@ -160,7 +160,7 @@ describe("platform application resolution", () => {
       includeWorkBuddy: true,
       includeTrae: true,
       autoCheckUpdates: false,
-      defaultTerminal: "iTerm" as const,
+      defaultTerminal: defaultTerminalFor(),
     };
 
     expect(mergeAppSettings(defaultSettings, persisted)).toMatchObject(persisted);
@@ -300,15 +300,30 @@ describe("resume commands", () => {
     );
   });
 
-  it("does not treat newly indexed local sources as Codex resume sessions", () => {
+  it("resumes OpenCode through its configured native CLI, not Codex or migration", () => {
     const session = {
       source: "opencode-cli",
-      rawId: "opencode-1",
-      projectPath: "/repo",
+      rawId: "ses_abc123",
+      projectPath: "/my repo",
     } as SessionSearchResult;
 
-    expect(() => getResumeCommand(session, defaultSettings, { platform: "darwin" })).toThrow(
-      "Resume is not supported for OpenCode sessions yet.",
+    expect(getResumeCommand(session, { ...defaultSettings, openCodeBinary: "opencode2" }, { platform: "darwin" })).toBe(
+      "cd '/my repo' && opencode2 --session ses_abc123",
+    );
+    expect(getResumeProcessSpec(session, { ...defaultSettings, openCodeBinary: "opencode2" })).toMatchObject({
+      command: "opencode2", args: ["--session", "ses_abc123"], cwd: "/my repo",
+    });
+    expect(() => getResumeCommand({ ...session, rawId: "--continue" }, defaultSettings)).toThrow("会话 ID 无效");
+    expect(() => getResumeCommand({ ...session, projectPath: "" }, defaultSettings)).toThrow("真实项目目录");
+    expect(() => getResumeCommand(session, defaultSettings, { sshTarget: "server" })).toThrow("仅支持本机");
+    expect(() => getResumeCommand(session, defaultSettings, { wslDistribution: "Ubuntu" })).toThrow("仅支持本机");
+  });
+
+  it("quotes the Windows opencode2 executable and keeps the native ID and cwd", () => {
+    const session = { source: "opencode-cli", rawId: "ses_123abc", projectPath: "E:\\项目 空格" } as SessionSearchResult;
+    const settings = { ...defaultSettings, defaultTerminal: "PowerShell" as const, openCodeBinary: "C:\\CLI Tools\\opencode2.cmd" };
+    expect(getResumeCommand(session, settings, { platform: "win32" })).toBe(
+      "cd 'E:\\项目 空格'; & 'C:\\CLI Tools\\opencode2.cmd' --session ses_123abc",
     );
   });
 
@@ -507,13 +522,13 @@ describe("Ghostty resume launch args", () => {
       rawId: "abc",
       projectPath: "/repo",
     } as SessionSearchResult;
-    withShell("/bin/zsh", () => {
+    withShell("/bin/zsh", () => withPlatform("darwin", () => {
       const args = buildGhosttyOpenArgs(session, defaultSettings);
       expect(args.slice(0, 5)).toEqual(["-na", "Ghostty.app", "--args", "-e", "/bin/zsh"]);
       expect(args[5]).toBe("-ic");
       expect(args[6]).toBe("cd /repo && claude --resume abc");
       expect(args.some((arg) => arg.includes("--initial-command"))).toBe(false);
-    });
+    }));
   });
 
   it("adds a POSIX title prefix without changing the resume id", () => {
@@ -1157,7 +1172,7 @@ describe("migration cli process specs", () => {
     };
 
     expect(
-      getMigrationResumeProcessSpec("claude", "session 1", "/repo with spaces", settings),
+      getMigrationResumeProcessSpec("claude", "session 1", "/repo with spaces", settings, { platform: "darwin" }),
     ).toEqual({
       command: "/opt/Claude CLI/claude",
       args: ["--resume", "session 1"],
@@ -1173,7 +1188,7 @@ describe("migration cli process specs", () => {
     };
 
     expect(
-      getMigrationResumeProcessSpec("codex", "session 1", "/repo it's me/ ", settings),
+      getMigrationResumeProcessSpec("codex", "session 1", "/repo it's me/ ", settings, { platform: "darwin" }),
     ).toEqual({
       command: "/opt/Codex CLI/codex",
       args: ["resume", "session 1"],
